@@ -8,7 +8,7 @@ Um ESP32 com dois sensores DS18B20 medirá as temperaturas do congelador e do co
 
 Fluxo previsto: sensores DS18B20 → ESP32 → API PHP com Slim → PostgreSQL → dashboard futuro.
 
-Estas instruções registram requisitos e diretrizes; não indicam que as funcionalidades previstas já estejam implementadas. Antes de implementar, examinar a estrutura, o `composer.json` e os arquivos relacionados. Não presumir que o repositório esteja vazio.
+Estas instruções distinguem funcionalidades implementadas de propostas futuras. Antes de implementar, examinar o código, o `composer.json` e os arquivos relacionados; não presumir que o repositório esteja vazio ou que planos já foram implementados.
 
 ## 2. Stack e ambiente definidos
 
@@ -19,7 +19,8 @@ Estas instruções registram requisitos e diretrizes; não indicam que as funcio
 - PostgreSQL 17 local via Docker Compose; o ambiente local já possui essa configuração.
 - PHPUnit 13 para testes automatizados.
 - Git e GitHub.
-- Windows e PowerShell para desenvolvimento e comandos de orientação.
+- Windows e PowerShell no desenvolvimento atual; scripts PHP/Composer de testes planejados para funcionar também em Linux e macOS (ainda não validados nesses sistemas).
+- `scripts/setup-tests.php` para preparação automatizada do banco de testes isolado.
 
 Não substituir a stack sem aprovação expressa. Não introduzir Laravel, Herd, SQLite, ORM ou frameworks adicionais.
 
@@ -35,29 +36,34 @@ Utilizar a solução mais simples que atenda corretamente aos requisitos de func
 - Não criar diretórios, arquivos, tabelas ou colunas antecipadamente.
 - Explicar o motivo e obter aprovação antes de instalar dependências.
 
-## 4. Requisitos definidos para o primeiro MVP
+## 4. Situação implementada e evolução do MVP
 
-A primeira versão deverá:
+### Já implementado e validado localmente (14/10/2026)
 
-1. Receber medições por HTTP POST e autenticar o dispositivo remetente.
-2. Validar a estrutura e os valores recebidos.
-3. Aceitar lotes com uma ou várias medições.
-4. Persistir medições no PostgreSQL com integridade e prevenção de duplicidades em retransmissões.
-5. Disponibilizar consultas por HTTP GET.
-6. Retornar JSON e códigos HTTP adequados, com falhas previsíveis e testáveis.
-7. Possuir testes automatizados relevantes desde as primeiras funcionalidades.
+- `GET /health` retorna HTTP 200 e JSON `{"status":"ok"}`.
+- `POST /api/v1/temperaturas` recebe **uma** medição JSON por requisição, usando `sensor_id` (`freezer` ou `refrigerator`) e `temperature` numérica.
+- O POST exige autenticação via Bearer token, valida a requisição, grava a medição no PostgreSQL via PDO e responde HTTP 201 em caso de sucesso.
+- O esquema `sql/001_temperature_readings.sql` cria `temperature_readings` com `id`, `sensor_id`, `temperature` e `received_at`.
+- A persistência real foi confirmada em consulta ao PostgreSQL local.
 
-### Medição e transmissão
+Exemplo do contrato **atual** do POST:
 
-O ESP32 deverá medir e transmitir em intervalos independentes. Por exemplo, poderá medir a cada minuto e transmitir a cada minuto, a cada cinco minutos ou a cada hora. Esses intervalos são exemplos, não configurações obrigatórias.
+```json
+{
+  "sensor_id": "freezer",
+  "temperature": -18.2
+}
+```
 
-A API deve considerar que uma medição pode ser reenviada quando o dispositivo perde a confirmação do servidor. Cada medição deverá possuir identificação adequada, e uma medição já armazenada não poderá gerar duplicidade. Não presumir que uma requisição HTTP ocorrerá exatamente uma vez.
+### Ainda pendente de implementação ou decisão
 
-### Propostas ainda não aprovadas
+- `GET /api/v1/temperaturas` para consultar medições armazenadas (próxima funcionalidade sugerida, ainda sujeita a discussão/aprovação).
+- Suporte a lotes com uma ou várias medições em uma requisição.
+- Identificação de medição, prevenção de duplicidades em retransmissões e política de confirmação de lotes.
+- Timestamps originados pelo ESP32, armazenamento offline e sincronização posterior.
+- Evolução de um sensor DS18B20 inicial para dois sensores e intervalos independentes de medição/transmissão.
 
-As rotas constam no documento original como `GET health`, `POST apiv1temperaturas` e `GET apiv1temperaturas`. Os caminhos exatos, incluindo barras e versionamento, precisam ser confirmados antes da implementação.
-
-O contrato JSON definitivo também está pendente. O exemplo abaixo ilustra apenas o conceito, com sintaxe JSON válida; nomes, tipos e formato dos campos ainda precisam ser aprovados:
+O formato abaixo é somente um exemplo conceitual para **lotes futuros**, e **não** representa o contrato atualmente aceito pela API:
 
 ```json
 {
@@ -73,7 +79,7 @@ O contrato JSON definitivo também está pendente. O exemplo abaixo ilustra apen
 }
 ```
 
-Não definir unilateralmente campos adicionais, limites numéricos, políticas de erro ou novas rotas.
+Não definir unilateralmente campos, limites, políticas de erro, novas rotas ou mudanças de contrato. A implementação futura deverá continuar incremental e testada.
 
 ## 5. Segurança obrigatória
 
@@ -91,7 +97,7 @@ A API será exposta à internet. Aplicar os seguintes requisitos:
 - Avaliar controle de acesso para endpoints de consulta.
 - Evitar dependências vulneráveis ou sem manutenção.
 
-Não introduzir autenticação complexa sem necessidade. O mecanismo de autenticação e o armazenamento de credenciais devem ser discutidos antes da implementação.
+Não introduzir autenticação complexa sem necessidade. O POST atual usa Bearer token; qualquer mudança de autenticação ou credenciais exige discussão prévia.
 
 ## 6. Banco de dados e integridade
 
@@ -103,7 +109,7 @@ Não introduzir autenticação complexa sem necessidade. O mecanismo de autentic
 - Não modificar diretamente o banco de produção.
 - Nunca executar testes destrutivos no banco de produção.
 
-A modelagem definitiva deverá ser aprovada antes da implementação. A política de transações, confirmação parcial ou rejeição integral de lotes também precisa ser discutida previamente.
+A tabela atual já está implementada. Alterações futuras de modelagem deverão ser aprovadas antes da implementação. A política de transações, confirmação parcial ou rejeição integral de lotes ainda precisa ser discutida.
 
 ## 7. Testes e verificação
 
@@ -119,6 +125,31 @@ Preferir testes pequenos e determinísticos. Separar testes unitários e de inte
 O ESP32 não precisa estar conectado ao computador para desenvolver ou testar a API. Simular requisições com ferramentas HTTP e testes automatizados, sem depender do dispositivo físico.
 
 Executar os testes afetados por cada alteração. Nunca afirmar que passaram sem executá-los; informar claramente qualquer impedimento de execução.
+
+### Automação de testes já implementada — Tarefa 03
+
+- Banco principal de desenvolvimento: `refrigerador`; banco isolado para testes: `refrigerador_test`, ambos no PostgreSQL 17 via Docker Compose.
+- `scripts/setup-tests.php` configura/prepara o banco isolado e aplica o script SQL versionado `sql/001_temperature_readings.sql` sem apagar os dados existentes.
+- `composer setup-tests` executa a preparação; `composer test` prepara o banco e executa PHPUnit com variáveis `TEST_DB_HOST`, `TEST_DB_PORT`, `TEST_DB_NAME`, `TEST_DB_USER` e `TEST_DB_PASSWORD`.
+- O script usa a configuração local do Docker Compose e tem proteção contra seleção do banco principal. Antes de alterar esse script, inspecionar como essa proteção funciona e mantê-la.
+- Em 14/10/2026, o usuário executou `composer setup-tests` e `composer test` no Windows: **36 testes aprovados, 126 asserções, zero ignorados e zero falhas**. Três testes de integração em `tests/TemperaturePersistenceTest.php` exercitam persistência e validação; usam transações com rollback.
+- A preparação repetida foi relatada como bem-sucedida pelo Codex. **Ainda não foram validados**: execução em Linux/macOS e criação automática de um banco de testes inexistente (o banco já havia sido criado manualmente).
+- Mensagens `404 Not Found`, `Slim Application Error` e `Falha ao persistir medição de temperatura` podem ser emitidas em cenários negativos de teste mesmo com a suíte aprovada; verificar resultado real do PHPUnit antes de classificá-las como regressão.
+- Não executar testes de integração no banco `refrigerador` ou em produção. Não remover controles de segurança para simplificar a automação.
+
+### Reconstrução documentada do ambiente
+
+Pré-requisitos atuais: Git, PHP com extensões necessárias, Composer e Docker/Compose. Após clonar e configurar `.env` local sem versionar segredos:
+
+```text
+composer install
+docker compose up -d postgres
+composer setup-tests
+composer test
+```
+
+O script de testes **não** instala PHP, Composer ou Docker e **não** substitui backup/restauração do banco principal.
+
 
 ## 8. Escopo autorizado e desenvolvimento incremental
 
@@ -137,7 +168,7 @@ Em instalações e configurações manuais, fornecer uma ação por vez, explica
 
 ## 9. Infraestrutura e produção previstas
 
-A implantação em produção será discutida posteriormente. Heroku é a primeira opção prevista, ainda não uma decisão definitiva de hospedagem.
+A implantação em produção será discutida posteriormente. Heroku é a primeira opção prevista, ainda não uma decisão definitiva de hospedagem. No desenvolvimento atual, **somente o PostgreSQL roda em contêiner**; PHP, Composer e PHPUnit são executados no host. Colocar PHP/Composer/testes também no Docker é **possibilidade futura**, não tarefa autorizada nem prioridade imediata.
 
 - Manter compatibilidade com PostgreSQL e evitar acoplamento desnecessário ao provedor.
 - Respeitar variáveis de ambiente e preservar o isolamento entre arquivos públicos e configurações privadas.
@@ -161,12 +192,12 @@ Não implementar antecipadamente:
 
 Discutir e aprovar antes das respectivas implementações:
 
-- Caminhos e contrato das rotas previstas.
+- Contrato e autorização da futura rota de consulta `GET /api/v1/temperaturas` e de outras rotas ainda não implementadas.
 - Contrato JSON, campos, tipos e formato de timestamps.
 - Limites de temperaturas, quantidade de medições e tamanho de requisições.
-- Mecanismo de autenticação e armazenamento de credenciais.
+- Eventuais mudanças no mecanismo de autenticação Bearer já existente e na gestão de credenciais.
 - Controle de acesso para consultas.
-- Modelagem do banco e estratégia concreta de identificação e unicidade das medições.
+- Evolução da modelagem atual e estratégia de identificação e unicidade das medições para lotes.
 - Política de transações, confirmação de lotes, tratamento de duplicidades e respostas de erro.
 - Hospedagem e procedimentos de deploy, backup e restauração.
 
@@ -177,3 +208,7 @@ Utilizar português brasileiro nas explicações e preservar identificadores té
 O desenvolvedor possui experiência anterior com PHP, APIs e bancos de dados e está retomando conhecimentos técnicos. Ajudar na compreensão do sistema sem explicar programação como para um iniciante absoluto.
 
 Ao finalizar uma implementação, informar os arquivos criados ou modificados, a funcionalidade implementada, os testes executados e seus resultados, como testar manualmente pelo PowerShell e as limitações ou decisões pendentes. Explicar o percurso da requisição pela aplicação quando pertinente.
+
+## 13. Estado do Git em 14/10/2026
+
+A automação de testes foi registrada no commit local `89ae94c` (`chore: automatiza ambiente de testes`). **Não há confirmação de `git push origin main`** nesta conversa; verificar o estado remoto antes de afirmar que a Tarefa 03 está publicada no GitHub. Não realizar push ou commit sem autorização expressa.
