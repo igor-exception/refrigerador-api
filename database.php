@@ -45,6 +45,22 @@ function storeTemperature(PDO $pdo, string $sensor, int|float $temperature): arr
     ]);
     $row = $statement->fetch(PDO::FETCH_ASSOC);
 
+    return temperatureReading($row);
+}
+
+function listTemperatures(PDO $pdo): array
+{
+    $statement = $pdo->prepare(
+        'SELECT id, sensor_id, temperature, received_at FROM temperature_readings
+         ORDER BY received_at DESC, id DESC LIMIT 50',
+    );
+    $statement->execute();
+
+    return array_map('temperatureReading', $statement->fetchAll(PDO::FETCH_ASSOC));
+}
+
+function temperatureReading(array $row): array
+{
     return [
         'id' => (int) $row['id'],
         'sensor_id' => $row['sensor_id'],

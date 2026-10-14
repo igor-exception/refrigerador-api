@@ -4,7 +4,7 @@ PHP 8.4, Slim 4, PDO PostgreSQL e PHPUnit 13. Execute os comandos PowerShell a p
 
 ## Configuração local
 
-O `.env` existente é usado pelo Docker Compose e deve ser preservado. O PHP não o carrega automaticamente. `.env.example` documenta variáveis com valores fictícios; não copie esse arquivo por cima do `.env` existente.
+O `.env` existente é usado pelo Docker Compose e deve ser preservado. `composer serve` resolve essa configuração pelo Compose e a transmite ao servidor PHP. A execução manual de PHP não carrega `.env` automaticamente. `.env.example` documenta variáveis com valores fictícios; não copie esse arquivo por cima do `.env` existente.
 
 Defina as variáveis no terminal que iniciará o PHP. Use a senha já configurada no PostgreSQL. Escolha pessoalmente um token longo, aleatório e sem espaços, mantenha-o em local seguro e não o publique. A entrada oculta evita incluí-lo no histórico dos comandos:
 
@@ -19,7 +19,7 @@ $writeSecret = Read-Host 'Token de escrita escolhido por você' -AsSecureString
 $env:API_WRITE_TOKEN = [System.Net.NetworkCredential]::new('', $writeSecret).Password
 ```
 
-Essas atribuições são explícitas: confira o ambiente antes de executá-las para não substituir configurações que deseja manter. Não há carregamento automático nem sobrescrita pelo código. Sem `API_WRITE_TOKEN`, o POST retorna 503; `/health` continua público e não abre conexão com o banco. O `.env.example` não contém token utilizável.
+Essas atribuições são necessárias para a execução manual; confira o ambiente antes de executá-las. Sem `API_WRITE_TOKEN`, o POST retorna 503; `/health` continua público e não abre conexão com o banco. O `.env.example` não contém token utilizável.
 
 ## Preparar a tabela
 
@@ -33,11 +33,17 @@ O script cria apenas `temperature_readings`, sem apagar dados. `IF NOT EXISTS` p
 
 ## Iniciar e enviar uma medição
 
-No terminal configurado:
+Com PostgreSQL em execução (`docker compose up -d postgres`), a partir da raiz do projeto:
 
 ```powershell
-php -S 127.0.0.1:8080 -t public public/index.php
+composer serve
 ```
+
+O comando funciona com PHP e Composer no host, em Windows, Linux e macOS; a validação local foi realizada no Windows. Usa o usuário, a senha e a porta publicada do Compose como padrões. `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD` e `API_WRITE_TOKEN` podem ser definidos no `.env` ou no terminal, com precedência do terminal. O banco é sempre `refrigerador`, mesmo se `DB_NAME` ou `TEST_DB_NAME` indicarem outro banco. Nenhuma credencial é impressa ou gravada pelo script.
+
+O servidor fica em primeiro plano em `127.0.0.1:8080`; encerre com Ctrl+C. O comando verifica a conexão e o nome do banco antes de iniciar; não inicia Docker, não cria tabelas e não executa migrações. Se a porta estiver ocupada, o comando termina com erro: encerre o servidor anterior. A senha deve corresponder ao volume PostgreSQL existente. O GET não exige token; para usar o POST, defina seu `API_WRITE_TOKEN` no terminal ou no `.env` antes de iniciar. O arquivo `.api-token.local` não é carregado por esse comando.
+
+Como alternativa, no terminal com todas as variáveis configuradas manualmente, continua disponível `php -S 127.0.0.1:8080 -t public public/index.php`.
 
 Em outro terminal, configure o mesmo token via entrada oculta:
 
@@ -69,7 +75,17 @@ O fluxo do POST é: comparação do Bearer token com `hash_equals` → decodific
 - 422: corpo diferente de objeto, campos obrigatórios ausentes, sensor desconhecido ou temperatura que não seja número JSON finito.
 - 503: token do servidor ausente, conexão/configuração/persistência indisponível, com mensagem pública genérica e log sem detalhes de credenciais.
 
-Não há classificação de temperaturas nem limites relativos a alimentos. `DOUBLE PRECISION` suporta números finitos do PHP; a restrição SQL apenas exclui infinitos e NaN. Campos adicionais são ignorados, não armazenados. Não há lotes, horários do dispositivo, consultas HTTP de temperaturas ou deduplicação.
+Não há classificação de temperaturas nem limites relativos a alimentos. `DOUBLE PRECISION` suporta números finitos do PHP; a restrição SQL apenas exclui infinitos e NaN. Campos adicionais são ignorados, não armazenados. Não há lotes, horários do dispositivo ou deduplicação.
+
+## Consultar medições
+
+`GET /api/v1/temperaturas` é público e não exige Bearer token. Com o servidor iniciado no terminal configurado com `DB_*`, execute em outro PowerShell:
+
+```powershell
+Invoke-RestMethod -Uri http://127.0.0.1:8080/api/v1/temperaturas | ConvertTo-Json -Depth 4
+```
+
+A rota abre a conexão PDO e consulta até 50 medições, ordenadas por `received_at DESC, id DESC`. Retorna HTTP 200 com `data`, uma lista contendo `id`, `sensor_id`, `temperature` numérica e `received_at` em UTC, no mesmo formato do POST. Sem registros, retorna `{"data":[]}`. Falhas de configuração, conexão ou consulta retornam HTTP 503 com mensagem genérica, sem credenciais ou SQL. O POST continua exigindo Bearer token. Não há filtros ou paginação.
 
 ## Testes
 
@@ -94,7 +110,7 @@ composer test
 
 `setup-tests` consulta a configuração resolvida por `docker compose config --format json`, sem exibi-la. Usa o usuário e a senha do serviço `postgres`, o host `127.0.0.1` e a porta publicada pelo Compose. Não solicita senha e não grava credenciais em arquivos adicionais. Conecta ao banco administrativo `postgres` apenas para consultar a existência do banco de testes e criá-lo quando necessário; aplica `sql/001_temperature_readings.sql` somente em `refrigerador_test`. O usuário precisa de permissão CREATE DATABASE apenas se esse banco ainda não existir.
 
-`composer test` repete a preparação e inicia o PHPUnit, transmitindo `TEST_DB_HOST`, `TEST_DB_PORT`, `TEST_DB_NAME`, `TEST_DB_USER` e `TEST_DB_PASSWORD` ao processo filho. Não é necessário exportar essas variáveis manualmente. As variáveis não permanecem no terminal depois do comando. Com o ambiente disponível, os 36 testes são executados, incluindo os três de integração.
+`composer test` repete a preparação e inicia o PHPUnit, transmitindo `TEST_DB_HOST`, `TEST_DB_PORT`, `TEST_DB_NAME`, `TEST_DB_USER` e `TEST_DB_PASSWORD` ao processo filho. Não é necessário exportar essas variáveis manualmente. As variáveis não permanecem no terminal depois do comando. A suíte inclui testes HTTP e de integração da gravação e da consulta; os testes da consulta usam tabelas temporárias na conexão isolada para preservar registros existentes.
 
 Overrides no ambiente do terminal têm precedência: `TEST_DB_*` → `DB_*` → configuração do Compose. O nome de testes usa `TEST_DB_NAME` ou `refrigerador_test`, nunca `DB_NAME`. Deve terminar em `_test` e ser diferente do banco principal configurado em `DB_NAME`, do banco principal do Compose e de `refrigerador`. O `.env` é interpretado pelo Compose; variáveis `TEST_DB_*` escritas nele não são exportadas ao PHP automaticamente.
 

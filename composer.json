@@ -4,6 +4,7 @@
         "slim/psr7": "^1.8"
     },
     "scripts": {
+        "serve": "@php scripts/serve.php",
         "setup-tests": "@php scripts/setup-tests.php",
         "test": "@php scripts/setup-tests.php --run-tests"
     },

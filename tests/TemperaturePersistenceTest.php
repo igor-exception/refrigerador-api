@@ -69,6 +69,68 @@ final class TemperaturePersistenceTest extends TestCase
         self::assertSame($before, (int) $this->pdo->query('SELECT count(*) FROM temperature_readings')->fetchColumn());
     }
 
+    private function queryResponse(): Psr\Http\Message\ResponseInterface
+    {
+        $app = createApplication('', static fn (): array => [], fn (): array => listTemperatures($this->pdo));
+        return $app->handle((new Slim\Psr7\Factory\ServerRequestFactory())
+            ->createServerRequest('GET', '/api/v1/temperaturas'));
+    }
+
+    private function isolateQueryTable(): void
+    {
+        // Tabela temporária da conexão: preserva todos os registros existentes.
+        // O rollback remove a tabela; nenhuma alteração no esquema persistente.
+        $this->pdo->exec('CREATE TEMP TABLE temperature_readings
+            (LIKE public.temperature_readings INCLUDING ALL) ON COMMIT DROP');
+    }
+
+    public function testQueryWithoutRecords(): void
+    {
+        $this->isolateQueryTable();
+        $response = $this->queryResponse();
+        self::assertSame(200, $response->getStatusCode());
+        self::assertSame('{"data":[]}', (string) $response->getBody());
+    }
+
+    public function testQueryReturnsStoredReading(): void
+    {
+        $this->isolateQueryTable();
+        $reading = storeTemperature($this->pdo, 'refrigerator', 4.8);
+        $response = $this->queryResponse();
+        self::assertSame(200, $response->getStatusCode());
+        self::assertSame(['data' => [$reading]], json_decode((string) $response->getBody(), true));
+    }
+
+    public function testQueryLimitsAndOrdersByTimestampThenId(): void
+    {
+        $this->isolateQueryTable();
+        $insert = $this->pdo->prepare('INSERT INTO temperature_readings (sensor_id, temperature, received_at)
+            VALUES (:sensor, :temperature, :received_at) RETURNING id');
+        $expected = [];
+        for ($i = 0; $i < 55; $i++) {
+            // Inserções alternadas: ordenar somente por ID não pode passar.
+            $timestamp = $i % 2 === 0 ? '2026-10-14T12:00:00Z' : '2026-10-14T11:00:00Z';
+            $insert->execute(['sensor' => 'freezer', 'temperature' => -18.2, 'received_at' => $timestamp]);
+            $expected[] = ['id' => (int) $insert->fetchColumn(), 'timestamp' => $timestamp];
+        }
+        usort($expected, static fn (array $a, array $b): int =>
+            strcmp($b['timestamp'], $a['timestamp']) ?: $b['id'] <=> $a['id']);
+        $response = $this->queryResponse();
+        $data = json_decode((string) $response->getBody(), true)['data'];
+        self::assertSame(200, $response->getStatusCode());
+        self::assertCount(50, $data);
+        self::assertSame(array_column(array_slice($expected, 0, 50), 'id'), array_column($data, 'id'));
+    }
+
+    public function testQuerySqlFailureReturnsSafeResponse(): void
+    {
+        // Simula estrutura indisponível somente na tabela temporária desta conexão.
+        $this->pdo->exec('CREATE TEMP TABLE temperature_readings (id BIGINT) ON COMMIT DROP');
+        $response = $this->queryResponse();
+        self::assertSame(503, $response->getStatusCode());
+        self::assertSame(['error' => 'Serviço de consulta indisponível.'], json_decode((string) $response->getBody(), true, 512, JSON_THROW_ON_ERROR));
+    }
+
     private function request(string $body): Psr\Http\Message\ServerRequestInterface
     {
         $request = (new Slim\Psr7\Factory\ServerRequestFactory())->createServerRequest('POST', '/api/v1/temperaturas')

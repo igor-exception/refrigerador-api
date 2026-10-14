@@ -10,4 +10,5 @@ return createApplication(
     getenv('API_WRITE_TOKEN') ?: '',
     static fn (string $sensor, int|float $temperature): array =>
         storeTemperature(connectDatabase(), $sensor, $temperature),
+    static fn (): array => listTemperatures(connectDatabase()),
 );

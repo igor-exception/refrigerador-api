@@ -14,11 +14,28 @@ function jsonResponse(ResponseInterface $response, array $data, int $status): Re
     return $response->withStatus($status)->withHeader('Content-Type', 'application/json');
 }
 
-function createApplication(string $token, callable $store): App
+function createApplication(string $token, callable $store, ?callable $list = null): App
 {
     $app = AppFactory::create();
     $app->get('/health', static fn (ServerRequestInterface $request, ResponseInterface $response): ResponseInterface =>
         jsonResponse($response, ['status' => 'ok'], 200));
+
+    $app->get('/api/v1/temperaturas', static function (
+        ServerRequestInterface $request,
+        ResponseInterface $response,
+    ) use ($list): ResponseInterface {
+        try {
+            if ($list === null) {
+                throw new RuntimeException('Consulta não configurada.');
+            }
+            $readings = $list();
+        } catch (PDOException | RuntimeException) {
+            error_log('Falha ao consultar medições de temperatura.');
+            return jsonResponse($response, ['error' => 'Serviço de consulta indisponível.'], 503);
+        }
+
+        return jsonResponse($response, ['data' => $readings], 200);
+    });
 
     $app->post('/api/v1/temperaturas', static function (
         ServerRequestInterface $request,
