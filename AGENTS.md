@@ -32,6 +32,15 @@ Já implementado e validado localmente (14/10/2026)
 - O esquema sql/001_temperature_readings.sql cria temperature_readings com id, sensor_id, temperature e received_at.
 - A persistência real foi confirmada em consulta ao PostgreSQL local.
 - GET /api/v1/temperaturas é público, retorna HTTP 200 com data (até 50 medições, ordenadas por received_at DESC, id DESC), campos id, sensor_id, temperature, received_at (UTC); data: [] quando vazio; erro de consulta retorna 503 genérico. Validado manualmente em 14/10/2026.
+Firmware e comunicação ESP32 → API — validação física confirmada pelo usuário em 14/10/2026
+- Firmware em firmware/esp32/esp32.ino, utilizado com Arduino IDE 2.3.10 e placa ESP32 Dev Module.
+- DS18B20 funcionando no GPIO 4, com OneWire e DallasTemperature; leituras a cada 10 segundos por millis() e conversão assíncrona.
+- Wi-Fi TESLA conectado; diagnóstico opcional implementado, ativável pela configuração local e desativável para uso normal.
+- ESP32 recebeu HTTP 200 de GET /health na API LAN, acessível em 192.168.1.81:8080 durante os testes. Esse IP é configuração local alterável, não um endereço permanente.
+- Fluxo físico DS18B20 → ESP32 → Wi-Fi → POST autenticado → API Slim → PostgreSQL → GET confirmado pelo usuário: uma medição válida por POST, inicialmente a cada 10 segundos, com sensor_id explicitamente configurado e contrato atual preservado.
+- HTTP 201 confirmado no Monitor Serial; medições reais recuperadas por GET /api/v1/temperaturas, incluindo registros consecutivos com intervalos próximos de 10 segundos. Conexões aceitas nos logs do servidor PHP, isoladamente, não comprovam gravação.
+- Houve melhora observada nas transmissões após aproximar o ESP32 do roteador. Relatos anteriores de connection refused e read Timeout não devem ser considerados definitivamente resolvidos: a comunicação não foi validada continuamente por períodos prolongados.
+- Não há armazenamento offline ou reenvio automático; falhas podem resultar em perda de medições, e timeout após possível gravação deixa o resultado desconhecido. NTP, measured_at, RTC e dashboard ainda não estão implementados. received_at continua sendo o horário de recebimento gerado no PostgreSQL.
 Exemplo do contrato atual do POST:
 {
   "sensor_id": "freezer",
@@ -55,6 +64,9 @@ O formato abaixo é somente um exemplo conceitual para lotes futuros, e não rep
   ]
 }
 Não definir unilateralmente campos, limites, políticas de erro, novas rotas ou mudanças de contrato. A implementação futura deverá continuar incremental e testada.
+Próximos assuntos planejados — ainda não implementados nem autorizados por esta atualização documental
+- Discutir sincronização de horário por NTP e o campo measured_at para representar o instante da medição, distinguindo-o de received_at. Aprovar contrato, formato, fuso, validação e evolução do banco antes de implementar; o POST atual permanece somente com sensor_id e temperature.
+- Preservar a avaliação de segurança do Bearer por HTTP local: usar somente credencial descartável e exclusiva do laboratório, nunca permanente ou de produção. Credenciais devem permanecer exclusivamente em arquivos locais ignorados pelo Git, sem aparecer em logs ou documentação; HTTPS continua obrigatório em produção.
 5. Segurança obrigatória
 A API será exposta à internet. Aplicar os seguintes requisitos:
 - Exigir HTTPS em produção.
@@ -92,13 +104,15 @@ Automação de testes já implementada — Tarefa 03
 - scripts/setup-tests.php configura/prepara o banco isolado e aplica o script SQL versionado sql/001_temperature_readings.sql sem apagar os dados existentes.
 - composer setup-tests executa a preparação; composer test prepara o banco e executa PHPUnit com variáveis TEST_DB_HOST, TEST_DB_PORT, TEST_DB_NAME, TEST_DB_USER e TEST_DB_PASSWORD.
 - O script usa a configuração local do Docker Compose e tem proteção contra seleção do banco principal. Antes de alterar esse script, inspecionar como essa proteção funciona e mantê-la.
-- Em 14/10/2026, o usuário executou composer setup-tests e composer test no Windows: 44 testes aprovados, 146 asserções, zero ignorados e zero falhas. Três testes de integração em tests/TemperaturePersistenceTest.php exercitam persistência e validação; usam transações com rollback.
+- Última suíte relatada em 14/10/2026: composer test no Windows, com 44 testes aprovados, 146 asserções, zero ignorados e zero falhas. Esse registro não substitui uma execução atual. Os testes de integração em tests/TemperaturePersistenceTest.php exercitam gravação, consulta e falhas; usam banco isolado e transações com rollback.
 - A preparação repetida foi relatada como bem-sucedida pelo Codex. Ainda não foram validados: execução em Linux/macOS e criação automática de um banco de testes inexistente (o banco já havia sido criado manualmente).
 - Mensagens 404 Not Found, Slim Application Error e Falha ao persistir medição de temperatura podem ser emitidas em cenários negativos de teste mesmo com a suíte aprovada; verificar resultado real do PHPUnit antes de classificá-las como regressão.
 - Não executar testes de integração no banco refrigerador ou em produção. Não remover controles de segurança para simplificar a automação.
 Inicialização local da API — Milestone 4
 - scripts/serve.php e composer serve foram implementados; o script resolve configurações via Compose sem imprimir credenciais, fixa DB_NAME=refrigerador e sobe o servidor PHP em 127.0.0.1:8080.
 - O comando recusa iniciar quando a porta 8080 está ocupada. Validado GET /health e GET /api/v1/temperaturas HTTP 200.
+- composer serve-lan reutiliza scripts/serve.php, com escuta padrão em 0.0.0.0:8080 ou IP configurado por --host; composer serve permanece em 127.0.0.1:8080. Usar LAN somente em rede doméstica confiável, sem tratar o servidor PHP de desenvolvimento como produção.
+- serve e serve-lan executam Composer\Config::disableProcessTimeout antes de iniciar o servidor. A correção é localizada nesses scripts, preserva --host e não altera timeouts dos demais scripts nem das requisições HTTP do ESP32. Ambos foram validados com limite temporário reduzido; não houve espera de 300 segundos nessa validação.
 - Não utilizar refrigerador_test para servir a API local.
 Reconstrução documentada do ambiente
 Pré-requisitos atuais: Git, PHP com extensões necessárias, Composer e Docker/Compose. Após clonar e configurar .env local sem versionar segredos:
@@ -127,7 +141,7 @@ A implantação em produção será discutida posteriormente. Heroku é a primei
 Não implementar antecipadamente:
 - Dashboard e gráficos históricos.
 - Notificações e alertas.
-- Firmware do ESP32.
+- Funcionalidades futuras do firmware ESP32 além da leitura, Wi-Fi, diagnóstico, GET /health e POST autenticado de uma temperatura já implementados, salvo autorização específica.
 - Persistência local no ESP32, possivelmente com LittleFS.
 - RTC.
 - Monitoramento elétrico.
@@ -147,5 +161,9 @@ Utilizar português brasileiro nas explicações e preservar identificadores té
 O desenvolvedor possui experiência anterior com PHP, APIs e bancos de dados e está retomando conhecimentos técnicos. Ajudar na compreensão do sistema sem explicar programação como para um iniciante absoluto.
 Ao finalizar uma implementação, informar os arquivos criados ou modificados, a funcionalidade implementada, os testes executados e seus resultados, como testar manualmente pelo PowerShell e as limitações ou decisões pendentes. Explicar o percurso da requisição pela aplicação quando pertinente.
 13. Estado do Git em 14/10/2026
-Commits 89ae94c (testes), 1d8da75 (AGENTS), ba0fd47 (consulta GET + composer serve) e fb23e63 (atualização AGENTS.md) confirmados em origin/main em 14/10/2026. O último git status informado mostrou árvore limpa e branch sincronizada. Alterações posteriores a esse estado devem ser validadas e versionadas mediante autorização expressa; não realizar push ou commit automaticamente.
-Roadmap: 4/9 milestones concluídos (44%, por contagem). Próximo Milestone 5: discutir e validar envio de medição simulada do ESP32 para a API; integração física do DS18B20 é Milestone 6. Não implementar sem aprovação.
+Registro anterior: commits 89ae94c (testes), 1d8da75 (AGENTS), ba0fd47 (consulta GET + composer serve) e fb23e63 (atualização AGENTS.md) confirmados em origin/main em 14/10/2026.
+Na inspeção documental de 14/10/2026, HEAD era aaa8ae2 (correção atualização AGENTS.md), na branch main com referência de acompanhamento origin/main e sem indicação local de commits à frente ou atrás. Havia alterações não commitadas em .gitignore, AGENTS.md, README.md, composer.json e scripts/serve.php, além de firmware/ ainda não rastreado. Esta atualização altera somente AGENTS.md e README.md, preservando as alterações anteriores; não houve consulta remota para confirmar publicação dessas alterações. Não realizar push ou commit automaticamente.
+Roadmap: mantido o registro de 4/9 milestones formalmente concluídos (44%, por contagem). O repositório não contém uma lista completa de critérios de aceite dos milestones 5 e 6 que permita certificar seu encerramento integral.
+- Milestone 5: conclusão funcional com ressalvas do envio autenticado ESP32 → API → PostgreSQL e recuperação pelo GET, conforme a validação física relatada. Não declarado formalmente concluído; a estabilidade por períodos prolongados permanece não validada.
+- Milestone 6: leitura física do DS18B20 no GPIO 4 e integração dessa leitura ao fluxo comprovadas, com testes de hardware adiantados. Conclusão funcional do recorte testado com ressalvas, sem declarar encerramento integral ou funcionamento de dois sensores.
+NTP e measured_at são próximos assuntos para discussão, não funcionalidades implementadas nem requisito de conclusão retroativamente imposto aos milestones 5 e 6. Não implementar as próximas etapas sem aprovação.

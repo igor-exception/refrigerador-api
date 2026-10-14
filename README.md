@@ -43,6 +43,24 @@ O comando funciona com PHP e Composer no host, em Windows, Linux e macOS; a vali
 
 O servidor fica em primeiro plano em `127.0.0.1:8080`; encerre com Ctrl+C. O comando verifica a conexão e o nome do banco antes de iniciar; não inicia Docker, não cria tabelas e não executa migrações. Se a porta estiver ocupada, o comando termina com erro: encerre o servidor anterior. A senha deve corresponder ao volume PostgreSQL existente. O GET não exige token; para usar o POST, defina seu `API_WRITE_TOKEN` no terminal ou no `.env` antes de iniciar. O arquivo `.api-token.local` não é carregado por esse comando.
 
+Para acessar pela rede doméstica confiável, encerre o servidor local e execute:
+
+```powershell
+composer serve-lan
+```
+
+Esse comando reutiliza a mesma configuração segura e o banco `refrigerador`, escutando em `0.0.0.0:8080` (todas as interfaces IPv4). Para escutar somente em um IP local específico, use, por exemplo:
+
+```powershell
+composer serve-lan -- --host=192.168.1.81
+```
+
+Substitua o IP pelo endereço atual do PC, que pode mudar. No Windows, consulte-o com `ipconfig`. `composer serve` permanece restrito a `127.0.0.1:8080`. Não execute os dois servidores simultaneamente na porta 8080.
+
+No celular conectado à mesma rede, abra `http://192.168.1.81:8080/health` e `http://192.168.1.81:8080/api/v1/temperaturas`, substituindo o IP conforme necessário. `0.0.0.0` é endereço de escuta, não o endereço para navegar. Para conferir pelo PowerShell, use `Invoke-RestMethod -Uri http://192.168.1.81:8080/health` e a mesma base para `/api/v1/temperaturas`.
+
+O modo LAN é exclusivo para testes em rede doméstica confiável. Teste inicialmente apenas os GETs públicos, sem enviar credenciais reais ou Bearer token por HTTP. O servidor PHP de desenvolvimento não deve ser usado em produção. O script não configura Firewall, roteadores, serviços externos ou encaminhamento de portas. Se outro dispositivo não alcançar o PC, confira o IP, a rede e as permissões de rede existentes; isolamento entre clientes Wi-Fi também pode impedir acesso.
+
 Como alternativa, no terminal com todas as variáveis configuradas manualmente, continua disponível `php -S 127.0.0.1:8080 -t public public/index.php`.
 
 Em outro terminal, configure o mesmo token via entrada oculta:
@@ -64,7 +82,7 @@ docker compose exec -T postgres psql -U refrigerador -d refrigerador -c 'SELECT 
 Invoke-RestMethod -Uri http://127.0.0.1:8080/health
 ```
 
-O servidor usa somente `public` como raiz e encaminha todas as requisições ao Slim. Em produção, o provedor ou proxy deve exigir HTTPS; este comando local não configura TLS e deve continuar limitado a `127.0.0.1`.
+O servidor usa somente `public` como raiz e encaminha todas as requisições ao Slim. Os comandos de desenvolvimento não configuram TLS. Em produção, utilize um servidor apropriado e exija HTTPS.
 
 ## Validação e segurança
 
@@ -87,7 +105,73 @@ Invoke-RestMethod -Uri http://127.0.0.1:8080/api/v1/temperaturas | ConvertTo-Jso
 
 A rota abre a conexão PDO e consulta até 50 medições, ordenadas por `received_at DESC, id DESC`. Retorna HTTP 200 com `data`, uma lista contendo `id`, `sensor_id`, `temperature` numérica e `received_at` em UTC, no mesmo formato do POST. Sem registros, retorna `{"data":[]}`. Falhas de configuração, conexão ou consulta retornam HTTP 503 com mensagem genérica, sem credenciais ou SQL. O POST continua exigindo Bearer token. Não há filtros ou paginação.
 
-## Testes
+## Firmware ESP32 — sensor DS18B20
+
+O sketch `firmware/esp32/esp32.ino` lê o primeiro DS18B20 no GPIO 4, usando OneWire e DallasTemperature, com Monitor Serial a 115200 baud. A medição inicia a cada 10.000 ms, controlada por `millis()`, e a conversão de 12 bits é assíncrona (750 ms), sem `delay(10000)`. Utilize alimentação externa no VDD do sensor; este modo não é destinado à alimentação parasita.
+
+Antes de compilar, copie a configuração de exemplo e edite a cópia privada:
+
+```powershell
+Copy-Item firmware/esp32/config.example.h firmware/esp32/config.local.h
+```
+
+Não sobrescreva uma configuração local existente. Em `config.local.h`, preencha `WIFI_SSID` (exemplo: TESLA), `WIFI_PASSWORD` e `API_BASE_URL` (exemplo: `http://192.168.1.81:8080`, sem barra final). O arquivo local é ignorado pelo Git; somente o exemplo sem segredos é versionável. As constantes de intervalo também ficam nesse arquivo: medição 10 segundos, GET `/health` 30 segundos e tentativa Wi-Fi 15 segundos. A conexão não aguarda indefinidamente: as leituras continuam sem Wi-Fi e novas tentativas ocorrem periodicamente.
+
+Para diagnosticar a rede TESLA, acrescente ou altere estas opções em `config.local.h`, sem substituir suas credenciais:
+
+```cpp
+#define WIFI_DIAGNOSTICS_ENABLED 1
+#define WIFI_SCAN_INTERVAL_MS 60000UL
+```
+
+Compile e carregue novamente. No Monitor Serial a 115200 baud, observe o status Wi-Fi, o motivo numérico da desconexão e sua descrição quando conhecida. A primeira varredura ocorre após a primeira tentativa de conexão; as seguintes respeitam o intervalo configurado, com mínimo de 60 segundos. A varredura é assíncrona e ocorre somente enquanto desconectado; durante ela, as tentativas de reconexão ficam pausadas, mas as leituras do sensor continuam. Uma varredura que exceder 15 segundos é interrompida. O encerramento local de uma tentativa para varrer ou reconectar também pode gerar evento de desconexão, identificado nas mensagens anteriores ao evento.
+
+O resultado informa se o SSID configurado foi encontrado em 2,4 GHz, RSSI em dBm, canal, BSSID e autenticação (nome e código). Se houver vários pontos de acesso com o mesmo SSID, todos os encontrados são mostrados. A senha nunca é impressa. Um resultado sem TESLA não prova que ela não existe: pode haver SSID oculto, sinal insuficiente ou incompatibilidade de banda; uma falha de varredura é relatada separadamente. Falha de autenticação ou handshake não prova, sozinha, que a senha está errada. Quando conectar, aparece o IP atribuído e as verificações de `/health` continuam normalmente.
+
+Para uso normal, volte `WIFI_DIAGNOSTICS_ENABLED` para `0` e carregue novamente. Configurações locais antigas sem essas opções mantêm o diagnóstico desativado. O modo não altera a senha, o roteador ou o backend. A causa da falha só pode ser avaliada após observar os resultados reais no ESP32.
+
+WiFi e HTTPClient fazem parte do ambiente Arduino ESP32, sem bibliotecas adicionais. HTTP usa timeout de conexão e leitura de 1 segundo cada, encerra `HTTPClient` e o cliente TCP após cada tentativa. A chamada HTTP é síncrona e pode causar pequeno atraso nas leituras em caso de falha; os intervalos são independentes, mas não são uma garantia de tempo real. Não há NTP, armazenamento offline, RTC ou lotes.
+
+Para verificar a API, inicie `composer serve-lan` no PC e mantenha ESP32 e PC na mesma rede doméstica confiável. O ESP32 precisa de uma rede Wi-Fi compatível com sua placa (normalmente 2,4 GHz).
+
+### Transmissão de temperatura física — laboratório
+
+Após cada conversão válida, o firmware tenta um POST `/api/v1/temperaturas`, usando somente `sensor_id` e `temperature` numérica. Configure explicitamente `SENSOR_ID` como `"refrigerator"` ou `"freezer"` e `API_WRITE_TOKEN` em `config.local.h`, conforme os campos vazios do exemplo. Sem token ou sensor válido, o POST fica desativado. Leituras inválidas não são enviadas. Sem Wi-Fi, a leitura é descartada; falhas HTTP não geram reenvio, pois a API atual não deduplica retransmissões. Um timeout pode ocorrer depois de o servidor gravar: o resultado fica desconhecido.
+
+Use uma credencial nova, descartável e exclusiva deste laboratório. HTTP local expõe o Bearer token ao tráfego da rede: nunca reutilize credenciais permanentes ou de produção. Armazene o mesmo token apenas no `config.local.h` ignorado e no `.env` local como `API_WRITE_TOKEN`, reiniciando o servidor após a alteração. Uma variável `API_WRITE_TOKEN` já definida no terminal tem precedência sobre `.env`; remova-a ou substitua-a pelo token de laboratório. O arquivo legado `.api-token.local` não é lido por `composer serve-lan`. Ao terminar os testes, descarte a credencial e remova-a dos arquivos locais; arquivos binários do firmware também contêm o token e devem permanecer privados.
+
+Na Arduino IDE, use ESP32 Dev Module e **Core Debug Level: None**. Logs internos de HTTP podem expor cabeçalhos; o sketch recusa compilar com debug do core ativado. Não publique credenciais, binários, capturas de cabeçalhos ou a configuração local. Redirecionamentos do POST estão desativados para não encaminhar a credencial a outro destino.
+
+Validação manual, após configurar a credencial com orientação de uma ação por vez:
+
+- Carregue o sketch e observe no Monitor Serial a 115200 baud uma temperatura válida seguida de `POST /api/v1/temperaturas: HTTP 201`. GET `/health` com 200 sozinho não comprova gravação.
+- Consulte `Invoke-RestMethod -Uri http://192.168.1.81:8080/api/v1/temperaturas | ConvertTo-Json -Depth 4`, ajustando o IP. Compare sensor, temperatura e horário de recebimento com a execução observada; anote o ID retornado na lista.
+- Confira a persistência com `docker compose exec -T postgres psql -U refrigerador -d refrigerador -c 'SELECT id, sensor_id, temperature, received_at FROM temperature_readings ORDER BY received_at DESC, id DESC LIMIT 10;'`. Compare o mesmo ID e valores, considerando que `received_at` representa o horário do servidor, não do ESP32.
+
+401 indica falha de autenticação; 422, entrada rejeitada; 503, indisponibilidade do servidor. O Monitor Serial imprime apenas status e mensagens sem token ou corpo da resposta. Compilar não comprova HTTP 201 no dispositivo nem persistência da temperatura física: essas evidências dependem do carregamento e da validação acima.
+
+### Registro de validação física — 14/10/2026
+
+O usuário confirmou o fluxo DS18B20 no GPIO 4 → ESP32 conectado ao Wi-Fi TESLA → POST autenticado → API Slim → PostgreSQL → GET de consulta. O Monitor Serial apresentou HTTP 201 e medições físicas foram recuperadas em `/api/v1/temperaturas`, incluindo registros consecutivos com intervalos próximos de 10 segundos. Foi observada melhora na regularidade das transmissões após aproximar o ESP32 do roteador. Logs do PHP com conexões aceitas, isoladamente, não são prova de gravação.
+
+A validação confirma o funcionamento no período observado, sem comprovar estabilidade contínua por períodos prolongados ou resolução definitiva das falhas de conexão anteriores. Não há armazenamento offline, reenvio automático ou NTP. Uma medição pode ser perdida em uma falha de comunicação; um timeout após possível gravação deixa o resultado desconhecido. O Bearer por HTTP permanece restrito a credencial descartável exclusiva do laboratório em rede confiável; produção exige HTTPS.
+
+A última suíte PHPUnit executada nesta etapa teve **44 testes, 146 asserções, zero falhas e zero ignorados**. Esse é um resultado anterior, não uma nova execução realizada para esta atualização documental.
+
+Os milestones 5 e 6 têm conclusão funcional com ressalvas no recorte validado: transmissão autenticada e leitura física de um DS18B20 integradas. Como o repositório não apresenta todos os critérios de aceite desses milestones, não foi declarado seu encerramento formal nem alterada a contagem de 4/9 concluídos. Dois sensores e operação prolongada não foram comprovados por esse teste.
+
+Os próximos assuntos planejados são NTP e `measured_at`, ainda não implementados. Será necessário discutir e aprovar a sincronização, o contrato e a evolução do banco antes de qualquer alteração. Atualmente o JSON permanece com `sensor_id` e `temperature`, e `received_at` representa o recebimento no servidor.
+
+Na Arduino IDE, com o suporte à placa ESP32 e as bibliotecas OneWire e DallasTemperature disponíveis:
+
+1. Abra `firmware/esp32/esp32.ino` em **Arquivo → Abrir**. A pasta `esp32` já corresponde ao nome do sketch.
+2. Conecte o ESP32 via USB, selecione a placa correspondente ao seu modelo e a porta serial em **Ferramentas**.
+3. Clique em **Verificar** para compilar e em **Carregar** para enviar à placa.
+4. Abra o Monitor Serial em **115200 baud**: acompanhe a contagem de sensores, tentativas de Wi-Fi, IP atribuído, temperatura ou falha do sensor e `GET /health: HTTP 200` quando a API responder. Outro status indica resposta inesperada; códigos negativos indicam falha de transporte. As mensagens não imprimem senha ou token.
+
+Adicionar o sketch ao repositório não confirma sua compilação ou carregamento no dispositivo. Essas operações devem ser verificadas na Arduino IDE com a placa utilizada.
+
+## Testes do backend
 
 Os comandos abaixo funcionam em PowerShell, Linux e macOS, a partir da raiz do repositório. Requerem PHP 8.4 CLI com `pdo_pgsql` e as extensões exigidas pelo Composer, Composer e Docker com Compose instalado e em execução.
 

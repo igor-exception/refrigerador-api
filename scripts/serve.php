@@ -32,17 +32,43 @@ function composeOutput(array $arguments, string $root): string
     return $output;
 }
 
-if (PHP_SAPI !== 'cli' || count($argv) !== 1) {
-    serveFail('Use composer serve sem argumentos.');
+if (PHP_SAPI !== 'cli') {
+    serveFail('Execute pelo terminal.');
 }
+$lan = false;
+$configuredHost = null;
+foreach (array_slice($argv, 1) as $argument) {
+    if ($argument === '--lan') {
+        $lan = true;
+    } elseif (str_starts_with($argument, '--host=') && $configuredHost === null) {
+        $configuredHost = substr($argument, 7);
+    } else {
+        serveFail('Use composer serve ou composer serve-lan -- --host=IPv4.');
+    }
+}
+if (!$lan && $configuredHost !== null) {
+    serveFail('A configuração de endereço exige composer serve-lan.');
+}
+$host = $lan ? ($configuredHost ?? '0.0.0.0') : '127.0.0.1';
+if (filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) === false) {
+    serveFail('O endereço de escuta deve ser um IPv4 válido.');
+}
+$listen = $host . ':8080';
 if (!extension_loaded('pdo_pgsql')) {
     serveFail('Habilite a extensão PHP pdo_pgsql.');
 }
-$existingServer = @stream_socket_client('tcp://127.0.0.1:8080', $socketError, $socketMessage, 1);
-if (is_resource($existingServer)) {
-    fclose($existingServer);
-    serveFail('A porta 8080 já está em uso. Encerre o servidor anterior antes de executar composer serve.');
+foreach (array_unique(['127.0.0.1', $host === '0.0.0.0' ? '127.0.0.1' : $host]) as $probeHost) {
+    $existingServer = @stream_socket_client('tcp://' . $probeHost . ':8080', $socketError, $socketMessage, 1);
+    if (is_resource($existingServer)) {
+        fclose($existingServer);
+        serveFail('A porta 8080 já está em uso. Encerre o servidor anterior antes de iniciar outro.');
+    }
 }
+$socket = @stream_socket_server('tcp://' . $listen, $socketError, $socketMessage);
+if (!is_resource($socket)) {
+    serveFail('Não foi possível reservar o endereço e a porta 8080. Confira o IP local e se a porta está ocupada.');
+}
+fclose($socket);
 $root = dirname(__DIR__);
 if (!is_file($root . '/vendor/autoload.php')) {
     serveFail('Execute composer install antes de iniciar a API.');
@@ -106,9 +132,12 @@ try {
     serveFail('Não foi possível conectar ao banco refrigerador. Confira PostgreSQL e a configuração local.');
 }
 
-echo 'API local: http://127.0.0.1:8080 (banco refrigerador). Encerre com Ctrl+C.' . PHP_EOL;
+echo 'API local: http://' . $listen . ' (banco refrigerador). Encerre com Ctrl+C.' . PHP_EOL;
+if ($lan) {
+    echo 'Modo LAN: use apenas em rede doméstica confiável; teste os GETs sem enviar tokens por HTTP.' . PHP_EOL;
+}
 $process = proc_open(
-    [PHP_BINARY, '-S', '127.0.0.1:8080', '-t', 'public', 'public/index.php'],
+    [PHP_BINARY, '-S', $listen, '-t', 'public', 'public/index.php'],
     [0 => STDIN, 1 => STDOUT, 2 => STDERR],
     $pipes,
     $root,

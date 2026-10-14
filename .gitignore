@@ -16,3 +16,6 @@
 
 # Token local da API
 .api-token.local
+
+# Configuração privada do firmware ESP32
+/firmware/esp32/config.local.h

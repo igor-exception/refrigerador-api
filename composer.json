@@ -4,7 +4,14 @@
         "slim/psr7": "^1.8"
     },
     "scripts": {
-        "serve": "@php scripts/serve.php",
+        "serve": [
+            "Composer\\Config::disableProcessTimeout",
+            "@php scripts/serve.php"
+        ],
+        "serve-lan": [
+            "Composer\\Config::disableProcessTimeout",
+            "@php scripts/serve.php --lan"
+        ],
         "setup-tests": "@php scripts/setup-tests.php",
         "test": "@php scripts/setup-tests.php --run-tests"
     },
