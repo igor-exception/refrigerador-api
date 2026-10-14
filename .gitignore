@@ -1,6 +1,7 @@
 # Credenciais e configurações locais
 .env
 .env.*
+!.env.example
 
 # Dependências instaladas pelo Composer
 /vendor/
@@ -12,3 +13,6 @@
 # Configurações locais do editor
 .vscode/
 .idea/
+
+# Token local da API
+.api-token.local
