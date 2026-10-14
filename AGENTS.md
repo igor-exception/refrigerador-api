@@ -134,7 +134,7 @@ Não implementar antecipadamente:
 - Integrações.
 11. Decisões pendentes
 Discutir e aprovar antes das respectivas implementações:
-- Contrato e autorização da futura rota de consulta GET /api/v1/temperaturas e de outras rotas ainda não implementadas.
+- Novas rotas ainda não implementadas e eventuais mudanças no GET /api/v1/temperaturas já público e funcional.
 - Contrato JSON, campos, tipos e formato de timestamps.
 - Limites de temperaturas, quantidade de medições e tamanho de requisições.
 - Eventuais mudanças no mecanismo de autenticação Bearer já existente e na gestão de credenciais.
@@ -147,5 +147,5 @@ Utilizar português brasileiro nas explicações e preservar identificadores té
 O desenvolvedor possui experiência anterior com PHP, APIs e bancos de dados e está retomando conhecimentos técnicos. Ajudar na compreensão do sistema sem explicar programação como para um iniciante absoluto.
 Ao finalizar uma implementação, informar os arquivos criados ou modificados, a funcionalidade implementada, os testes executados e seus resultados, como testar manualmente pelo PowerShell e as limitações ou decisões pendentes. Explicar o percurso da requisição pela aplicação quando pertinente.
 13. Estado do Git em 14/10/2026
-Commits 89ae94c (testes), 1d8da75 (AGENTS) e ba0fd47 (consulta GET + composer serve) confirmados em origin/main em 14/10/2026. git status mostrou árvore limpa. As edições posteriores a esta versão do AGENTS.md ainda precisam de revisão e versionamento. Não realizar push ou commit sem autorização expressa.
+Commits 89ae94c (testes), 1d8da75 (AGENTS), ba0fd47 (consulta GET + composer serve) e fb23e63 (atualização AGENTS.md) confirmados em origin/main em 14/10/2026. O último git status informado mostrou árvore limpa e branch sincronizada. Alterações posteriores a esse estado devem ser validadas e versionadas mediante autorização expressa; não realizar push ou commit automaticamente.
 Roadmap: 4/9 milestones concluídos (44%, por contagem). Próximo Milestone 5: discutir e validar envio de medição simulada do ESP32 para a API; integração física do DS18B20 é Milestone 6. Não implementar sem aprovação.
