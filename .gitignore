@@ -1,0 +1,14 @@
+# Credenciais e configurações locais
+.env
+.env.*
+
+# Dependências instaladas pelo Composer
+/vendor/
+
+# Arquivos temporários e logs
+*.log
+*.tmp
+
+# Configurações locais do editor
+.vscode/
+.idea/
