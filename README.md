@@ -73,20 +73,39 @@ Não há classificação de temperaturas nem limites relativos a alimentos. `DOU
 
 ## Testes
 
-```powershell
-php vendor/phpunit/phpunit/phpunit
+Os comandos abaixo funcionam em PowerShell, Linux e macOS, a partir da raiz do repositório. Requerem PHP 8.4 CLI com `pdo_pgsql` e as extensões exigidas pelo Composer, Composer e Docker com Compose instalado e em execução.
+
+Após clonar ou formatar o computador:
+
+1. Crie um arquivo `.env` local contendo `POSTGRES_PASSWORD=seu-segredo-local`, escolhendo uma senha própria. Esse arquivo é ignorado pelo Git. Se o volume PostgreSQL já existir, use a senha com que ele foi inicializado: editar `.env` não muda a senha do banco existente. Não sobrescreva seu `.env` atual.
+2. Instale as dependências já declaradas e inicie o serviço:
+
+```sh
+composer install
+docker compose up -d postgres
 ```
 
-Testes HTTP usam o Slim diretamente e uma função de persistência controlada; não precisam de servidor nem de banco. Um teste força uma falha real de conexão PDO em uma porta inválida e verifica a resposta segura. Os testes de integração são ignorados quando `TEST_DB_*` não está configurado.
+3. Aguarde o PostgreSQL ficar pronto e execute:
 
-Para integração, prepare previamente e por decisão explícita um banco separado chamado `refrigerador_test`, com usuário e permissões adequados. Os testes não criam bancos nem tabelas. Aplique nele o mesmo script SQL, escolhendo explicitamente o banco de testes:
-
-```powershell
-Get-Content -Raw sql/001_temperature_readings.sql | docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U refrigerador -d refrigerador_test
+```sh
+composer setup-tests
+composer test
 ```
 
-Configure no terminal dos testes `TEST_DB_HOST`, `TEST_DB_PORT`, `TEST_DB_NAME`, `TEST_DB_USER` e `TEST_DB_PASSWORD`, seguindo `.env.example` e usando entrada oculta para a senha. O nome deve terminar em `_test` e ser diferente de `DB_NAME`; nunca aponte essas variáveis para desenvolvimento ou produção. Prefira um usuário autorizado apenas no banco de testes.
+`setup-tests` consulta a configuração resolvida por `docker compose config --format json`, sem exibi-la. Usa o usuário e a senha do serviço `postgres`, o host `127.0.0.1` e a porta publicada pelo Compose. Não solicita senha e não grava credenciais em arquivos adicionais. Conecta ao banco administrativo `postgres` apenas para consultar a existência do banco de testes e criá-lo quando necessário; aplica `sql/001_temperature_readings.sql` somente em `refrigerador_test`. O usuário precisa de permissão CREATE DATABASE apenas se esse banco ainda não existir.
 
-Os testes de persistência verificam ambos os sensores, temperatura, horário e ausência de inserção inválida. Cada teste usa transação com rollback, sem truncar ou apagar dados. A sequência dos IDs pode avançar mesmo após rollback, comportamento normal do PostgreSQL.
+`composer test` repete a preparação e inicia o PHPUnit, transmitindo `TEST_DB_HOST`, `TEST_DB_PORT`, `TEST_DB_NAME`, `TEST_DB_USER` e `TEST_DB_PASSWORD` ao processo filho. Não é necessário exportar essas variáveis manualmente. As variáveis não permanecem no terminal depois do comando. Com o ambiente disponível, os 36 testes são executados, incluindo os três de integração.
 
-Depois de configurar, execute novamente o comando de testes. Se o banco ou a tabela estiverem ausentes, a integração falhará explicitamente. Se testes e outra aplicação escreverem simultaneamente no banco de testes, as verificações de contagem podem sofrer interferência; use-o exclusivamente durante a execução.
+Overrides no ambiente do terminal têm precedência: `TEST_DB_*` → `DB_*` → configuração do Compose. O nome de testes usa `TEST_DB_NAME` ou `refrigerador_test`, nunca `DB_NAME`. Deve terminar em `_test` e ser diferente do banco principal configurado em `DB_NAME`, do banco principal do Compose e de `refrigerador`. O `.env` é interpretado pelo Compose; variáveis `TEST_DB_*` escritas nele não são exportadas ao PHP automaticamente.
+
+A preparação pode ser repetida: não apaga bancos, tabelas ou dados. O SQL usa `IF NOT EXISTS`, portanto não migra nem corrige estruturas preexistentes incompatíveis. A aplicação do esquema ocorre em transação. Os testes de persistência usam transações com rollback; sequências de IDs podem avançar, comportamento normal do PostgreSQL. Use o banco de testes exclusivamente durante a suíte para evitar interferência nas contagens.
+
+Se a conexão, configuração ou preparação falhar, o comando termina com erro antes de iniciar a suíte; não transforma indisponibilidade em sucesso com integração ignorada. Confira se Docker está ativo, se o PostgreSQL está pronto, se `pdo_pgsql` está habilitado e se as credenciais correspondem ao volume existente. Não use `docker compose down -v` para resolver problemas: ele pode excluir dados.
+
+Para executar apenas a suíte sem preparação automática:
+
+```sh
+php vendor/bin/phpunit
+```
+
+Nesse comando direto, os testes de integração continuam sendo ignorados se as cinco variáveis `TEST_DB_*` não estiverem definidas. Os testes HTTP usam Slim diretamente e não precisam de servidor HTTP nem do ESP32. Nenhum comando de testes modifica funcionalidades da API ou dados do banco principal.

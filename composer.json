@@ -3,6 +3,10 @@
         "slim/slim": "^4.15",
         "slim/psr7": "^1.8"
     },
+    "scripts": {
+        "setup-tests": "@php scripts/setup-tests.php",
+        "test": "@php scripts/setup-tests.php --run-tests"
+    },
     "require-dev": {
         "phpunit/phpunit": "^13.4"
     }
