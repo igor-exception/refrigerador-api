@@ -7,6 +7,8 @@ use Psr\Http\Message\ServerRequestInterface;
 use Slim\App;
 use Slim\Factory\AppFactory;
 
+require_once __DIR__ . '/measurements.php';
+
 function jsonResponse(ResponseInterface $response, array $data, int $status): ResponseInterface
 {
     $response->getBody()->write(json_encode($data, JSON_THROW_ON_ERROR));
@@ -24,11 +26,21 @@ function createApplication(string $token, callable $store, ?callable $list = nul
         ServerRequestInterface $request,
         ResponseInterface $response,
     ) use ($list): ResponseInterface {
+        $beforeId = null;
+        $query = $request->getQueryParams();
+        if (array_key_exists('before_id', $query)) {
+            $cursor = $query['before_id'];
+            if ((!is_string($cursor) && !is_int($cursor))
+                || !preg_match('/^[1-9][0-9]*$/D', (string) $cursor)
+                || ($beforeId = filter_var($cursor, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]])) === false) {
+                return jsonResponse($response, ['error' => 'before_id deve ser um ID inteiro positivo válido.'], 422);
+            }
+        }
         try {
             if ($list === null) {
                 throw new RuntimeException('Consulta não configurada.');
             }
-            $readings = $list();
+            $readings = $list($beforeId);
         } catch (PDOException | RuntimeException) {
             error_log('Falha ao consultar medições de temperatura.');
             return jsonResponse($response, ['error' => 'Serviço de consulta indisponível.'], 503);
@@ -68,14 +80,22 @@ function createApplication(string $token, callable $store, ?callable $list = nul
         }
 
         try {
-            $reading = $store($data->sensor_id, $data->temperature);
+            $metadata = measurementMetadata($data);
+        } catch (InvalidArgumentException $exception) {
+            return jsonResponse($response, ['error' => $exception->getMessage()], 422);
+        }
+
+        try {
+            $result = $store($data->sensor_id, $data->temperature, $metadata);
+        } catch (DomainException) {
+            return jsonResponse($response, ['error' => 'measurement_id já utilizado neste dispositivo com conteúdo diferente.'], 409);
         } catch (PDOException | RuntimeException) {
             // Não registrar a mensagem da exceção: ela pode conter credenciais ou SQL.
             error_log('Falha ao persistir medição de temperatura.');
             return jsonResponse($response, ['error' => 'Serviço de gravação indisponível.'], 503);
         }
 
-        return jsonResponse($response, $reading, 201);
+        return jsonResponse($response, $result['reading'], $result['created'] ? 201 : 200);
     });
 
     $app->addRoutingMiddleware();

@@ -9,6 +9,7 @@
 #include <esp_wifi.h>
 #include <esp_sntp.h>
 #include <esp_timer.h>
+#include <esp_random.h>
 #include <time.h>
 
 #if __has_include("config.local.h")
@@ -20,6 +21,9 @@
 // Configuração privada antiga continua compilável, mas não autoriza POST.
 #ifndef SENSOR_ID
 #define SENSOR_ID ""
+#endif
+#ifndef DEVICE_ID
+#define DEVICE_ID "geladeira_01"
 #endif
 #ifndef API_WRITE_TOKEN
 #define API_WRITE_TOKEN ""
@@ -85,6 +89,45 @@ bool ntpNotificationPending = false;
 bool ntpWifiWasConnected = false;
 TimeQuality lastReportedTimeQuality = TimeQuality::Unknown;
 MeasurementTime measurementTime;
+char bootMeasurementPrefix[37] = {};
+uint64_t measurementSequence = 0;
+char measurementId[64] = {};
+uint64_t measurementUptimeMs = 0;
+int32_t measurementRssi = 0;
+bool measurementHasRssi = false;
+
+void initializeMeasurementIds() {
+  // Radio Wi-Fi habilitado fornece entropia ao RNG do ESP32, mesmo sem associação.
+  if (WiFi.getMode() == WIFI_OFF) return;
+  uint8_t uuid[16];
+  esp_fill_random(uuid, sizeof(uuid));
+  uuid[6] = (uuid[6] & 0x0f) | 0x40;  // UUID versão 4.
+  uuid[8] = (uuid[8] & 0x3f) | 0x80;
+  const char hex[] = "0123456789abcdef";
+  char* cursor = bootMeasurementPrefix;
+  for (size_t i = 0; i < sizeof(uuid); i++) {
+    if (i == 4 || i == 6 || i == 8 || i == 10) *cursor++ = '-';
+    *cursor++ = hex[uuid[i] >> 4];
+    *cursor++ = hex[uuid[i] & 0x0f];
+  }
+  *cursor = '\0';
+}
+
+void captureMeasurementMetadata() {
+  measurementId[0] = '\0';
+  if (bootMeasurementPrefix[0] == '\0') initializeMeasurementIds();
+  if (bootMeasurementPrefix[0] != '\0' && measurementSequence < UINT64_MAX) {
+    measurementSequence++;
+    snprintf(measurementId, sizeof(measurementId), "%s-%llu", bootMeasurementPrefix,
+      static_cast<unsigned long long>(measurementSequence));
+  }
+  measurementUptimeMs = static_cast<uint64_t>(esp_timer_get_time()) / 1000;
+  measurementHasRssi = WiFi.status() == WL_CONNECTED;
+  if (measurementHasRssi) {
+    measurementRssi = WiFi.RSSI();
+    measurementHasRssi = measurementRssi >= -127 && measurementRssi < 0;
+  }
+}
 
 // Declarações explícitas para os tipos locais no pré-processamento da Arduino IDE.
 TimeQuality currentTimeQuality();
@@ -342,6 +385,14 @@ void checkHealth() {
 
 bool postConfigurationValid() {
   if (strcmp(SENSOR_ID, "freezer") != 0 && strcmp(SENSOR_ID, "refrigerator") != 0) return false;
+  size_t deviceLength = strlen(DEVICE_ID);
+  if (deviceLength == 0 || deviceLength > 64) return false;
+  for (size_t i = 0; i < deviceLength; i++) {
+    char character = DEVICE_ID[i];
+    bool alphanumeric = (character >= 'a' && character <= 'z')
+      || (character >= 'A' && character <= 'Z') || (character >= '0' && character <= '9');
+    if (!alphanumeric && (i == 0 || (character != '.' && character != '_' && character != ':' && character != '-'))) return false;
+  }
   if (strlen(API_WRITE_TOKEN) == 0) return false;
   for (const char* character = API_WRITE_TOKEN; *character != '\0'; character++) {
     if (isspace(static_cast<unsigned char>(*character))) return false;
@@ -354,7 +405,11 @@ void sendTemperature(float temperature) {
   if (!isfinite(temperature) || temperature == DEVICE_DISCONNECTED_C
       || temperature < -55.0f || temperature > 125.0f) return;
   if (!postConfigurationValid()) {
-    Serial.println("POST desativado: configure SENSOR_ID e token de laboratorio em config.local.h.");
+    Serial.println("POST desativado: confira DEVICE_ID, SENSOR_ID e token de laboratorio locais.");
+    return;
+  }
+  if (measurementId[0] == '\0' || measurementUptimeMs > 9007199254740991ULL) {
+    Serial.println("POST desativado: identificacao ou uptime da medicao indisponivel.");
     return;
   }
   if (WiFi.status() != WL_CONNECTED) {
@@ -371,9 +426,23 @@ void sendTemperature(float temperature) {
   if (http.begin(client, String(API_BASE_URL) + "/api/v1/temperaturas")) {
     http.addHeader("Content-Type", "application/json");
     http.addHeader("Authorization", String("Bearer ") + API_WRITE_TOKEN);
-    // SENSOR_ID foi validado; quatro casas preservam a resolução de 0,0625 °C.
-    String body = String("{\"sensor_id\":\"") + SENSOR_ID
-      + "\",\"temperature\":" + String(temperature, 4) + "}";
+    // Snapshot original da medição: nunca recalcular após uma sincronização NTP.
+    char measuredAt[32] = {};
+    if (measurementTime.available) {
+      struct tm utc;
+      gmtime_r(&measurementTime.utc, &utc);
+      strftime(measuredAt, sizeof(measuredAt), "%Y-%m-%dT%H:%M:%SZ", &utc);
+    }
+    char uptime[24];
+    snprintf(uptime, sizeof(uptime), "%llu", static_cast<unsigned long long>(measurementUptimeMs));
+    String body;
+    body.reserve(400);
+    body = String("{\"device_id\":\"") + DEVICE_ID + "\",\"sensor_id\":\"" + SENSOR_ID
+      + "\",\"measurement_id\":\"" + measurementId + "\",\"temperature\":" + String(temperature, 4)
+      + ",\"measured_at\":" + (measurementTime.available ? String("\"") + measuredAt + "\"" : String("null"))
+      + ",\"time_quality\":\"" + timeQualityName(measurementTime.quality)
+      + "\",\"wifi_rssi\":" + (measurementHasRssi ? String(measurementRssi) : String("null"))
+      + ",\"uptime_ms\":" + uptime + ",\"observation\":null}";
     int status = http.POST(body);
     Serial.print("POST /api/v1/temperaturas: ");
     if (status > 0) {
@@ -381,6 +450,8 @@ void sendTemperature(float temperature) {
       Serial.println(status);
       if (status == 201) {
         Serial.println("API confirmou gravacao da medicao.");
+      } else if (status == 200) {
+        Serial.println("API confirmou medicao ja armazenada, sem duplicacao.");
       } else {
         Serial.println("Medicao sem confirmacao de gravacao. Confira status e configuracao local.");
       }
@@ -420,6 +491,7 @@ void setup() {
   }
 
   WiFi.mode(WIFI_STA);
+  initializeMeasurementIds();
   WiFi.setAutoReconnect(false);  // Tentativas controladas pelo intervalo abaixo.
   if (WIFI_DIAGNOSTICS_ENABLED) {
     WiFi.onEvent(onWifiEvent);
@@ -442,6 +514,7 @@ void loop() {
   if (!conversionPending && now - lastMeasurement >= MEASUREMENT_INTERVAL_MS) {
     // Snapshot no início da conversão, não no momento do POST. Não será recalculado.
     measurementTime = captureMeasurementTime();
+    captureMeasurementMetadata();
     sensor.requestTemperatures();
     lastMeasurement = millis();
     conversionStarted = lastMeasurement;
@@ -461,6 +534,8 @@ void loop() {
       Serial.print(temperatura);
       Serial.println(" °C");
       printMeasurementTime(measurementTime);
+      Serial.print("measurement_id: ");
+      Serial.println(measurementId);
       sendTemperature(temperatura);
     }
   }

@@ -8,7 +8,7 @@ require_once __DIR__ . '/database.php';
 
 return createApplication(
     getenv('API_WRITE_TOKEN') ?: '',
-    static fn (string $sensor, int|float $temperature): array =>
-        storeTemperature(connectDatabase(), $sensor, $temperature),
-    static fn (): array => listTemperatures(connectDatabase()),
+    static fn (string $sensor, int|float $temperature, ?array $metadata): array =>
+        storeTemperature(connectDatabase(), $sensor, $temperature, $metadata),
+    static fn (?int $beforeId = null): array => listTemperatures(connectDatabase(), $beforeId),
 );

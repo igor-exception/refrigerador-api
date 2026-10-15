@@ -66,7 +66,7 @@ if (!extension_loaded('pdo_pgsql')) {
 }
 
 $root = dirname(__DIR__);
-$sqlPath = $root . DIRECTORY_SEPARATOR . 'sql' . DIRECTORY_SEPARATOR . '001_temperature_readings.sql';
+$sqlPaths = [$root . '/sql/001_temperature_readings.sql', $root . '/sql/002_measurement_metadata.sql'];
 
 // Compose resolve o .env com suas próprias regras; não duplicar seu parser em PHP.
 // Capturar toda a saída: ela contém a senha e nunca deve aparecer no terminal.
@@ -131,12 +131,12 @@ if ($config['password'] === null) {
 if (preg_match('/[;\s]/', $config['host'])) {
     fail('TEST_DB_HOST/DB_HOST inválido.');
 }
-if (!is_file($sqlPath)) {
-    fail('Arquivo SQL não encontrado em sql/001_temperature_readings.sql.');
-}
-$sql = file_get_contents($sqlPath);
-if ($sql === false || trim($sql) === '') {
-    fail('O arquivo SQL está vazio ou não pode ser lido.');
+$scripts = [];
+foreach ($sqlPaths as $sqlPath) {
+    if (!is_file($sqlPath) || ($sql = file_get_contents($sqlPath)) === false || trim($sql) === '') {
+        fail('Script SQL versionado ausente, vazio ou ilegível.');
+    }
+    $scripts[] = $sql;
 }
 
 try {
@@ -163,7 +163,9 @@ try {
     }
     echo 'Aplicando esquema SQL versionado ao banco de testes...' . PHP_EOL;
     $testDb->beginTransaction();
-    $testDb->exec($sql);
+    foreach ($scripts as $sql) {
+        $testDb->exec($sql);
+    }
     $check = $testDb->query("SELECT to_regclass('public.temperature_readings')")->fetchColumn();
     if ($check === null || $check === false) {
         fail('A tabela public.temperature_readings não foi encontrada após aplicar o SQL.');

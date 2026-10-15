@@ -25,7 +25,7 @@ final class TemperatureTest extends TestCase
         $calls = [];
         $app = createApplication(self::TOKEN, static function ($id, $value) use (&$calls): array {
             $calls[] = [$id, $value];
-            return ['id' => 1, 'sensor_id' => $id, 'temperature' => $value, 'received_at' => '2026-10-14T12:00:00Z'];
+            return ['reading' => ['id' => 1, 'sensor_id' => $id, 'temperature' => $value, 'received_at' => '2026-10-14T12:00:00Z'], 'created' => true];
         });
         $response = $app->handle(self::request(json_encode(
             ['sensor_id' => $sensor, 'temperature' => $temperature], JSON_THROW_ON_ERROR,

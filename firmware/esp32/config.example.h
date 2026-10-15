@@ -7,6 +7,7 @@ constexpr char API_BASE_URL[] = "http://192.168.1.81:8080";  // Sem barra final.
 
 // Configure explicitamente em config.local.h; token descartável exclusivo do laboratório.
 #define SENSOR_ID "refrigerator"
+#define DEVICE_ID "geladeira_01"  // Estável e exclusivo para este dispositivo; não é segredo.
 #define API_WRITE_TOKEN ""  // Mesmo token de laboratório usado pelo servidor; nunca publique.
 
 constexpr unsigned long MEASUREMENT_INTERVAL_MS = 10000;

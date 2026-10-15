@@ -9,6 +9,18 @@ require_once dirname(__DIR__) . '/application.php';
 
 final class TemperatureQueryTest extends TestCase
 {
+    public function testInvalidHistoryCursorsNeverQueryDatabase(): void
+    {
+        $app = createApplication('', static fn (): array => [], function (): never { self::fail('Cursor inválido chegou ao banco.'); });
+        foreach (['', '0', '-1', '1.5', '1 OR 1=1', '9999999999999999999999999', ['1']] as $cursor) {
+            $request = (new ServerRequestFactory())->createServerRequest('GET', '/api/v1/temperaturas')
+                ->withQueryParams(['before_id' => $cursor]);
+            $response = $app->handle($request);
+            self::assertSame(422, $response->getStatusCode());
+            self::assertSame('application/json', $response->getHeaderLine('Content-Type'));
+        }
+    }
+
     public function testQueryIsPublicAndPostStillRequiresToken(): void
     {
         $readings = [['id' => 1, 'sensor_id' => 'freezer', 'temperature' => -18.2,
