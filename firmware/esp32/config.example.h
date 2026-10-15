@@ -17,3 +17,9 @@ constexpr uint16_t HTTP_TIMEOUT_MS = 1000;
 // Copie estas opções para config.local.h para ativar o diagnóstico.
 #define WIFI_DIAGNOSTICS_ENABLED 0
 #define WIFI_SCAN_INTERVAL_MS 60000UL  // Mínimo efetivo: 60 segundos.
+
+// NTP do core ESP32; UTC, sem credenciais. Configurações locais antigas usam estes padrões.
+#define NTP_SERVER_1 "pool.ntp.org"
+#define NTP_SERVER_2 "time.cloudflare.com"
+#define NTP_SYNC_INTERVAL_MS 3600000UL  // Atualização a cada 1 hora; mínimo SNTP: 15000 ms.
+#define TIME_REFERENCE_MAX_AGE_MS 21600000ULL  // Após 6 horas sem NTP válido: estimated.

@@ -7,6 +7,9 @@
 #include <string.h>
 #include <atomic>
 #include <esp_wifi.h>
+#include <esp_sntp.h>
+#include <esp_timer.h>
+#include <time.h>
 
 #if __has_include("config.local.h")
 #include "config.local.h"
@@ -33,6 +36,23 @@
 #define WIFI_SCAN_INTERVAL_MS 60000UL
 #endif
 
+#ifndef NTP_SERVER_1
+#define NTP_SERVER_1 "pool.ntp.org"
+#endif
+#ifndef NTP_SERVER_2
+#define NTP_SERVER_2 "time.cloudflare.com"
+#endif
+#ifndef NTP_SYNC_INTERVAL_MS
+#define NTP_SYNC_INTERVAL_MS 3600000UL
+#endif
+#ifndef TIME_REFERENCE_MAX_AGE_MS
+#define TIME_REFERENCE_MAX_AGE_MS 21600000ULL
+#endif
+static_assert(NTP_SYNC_INTERVAL_MS >= 15000UL && NTP_SYNC_INTERVAL_MS <= UINT32_MAX,
+  "NTP_SYNC_INTERVAL_MS deve caber em uint32_t e ser pelo menos 15000 ms.");
+static_assert(TIME_REFERENCE_MAX_AGE_MS > 0 && TIME_REFERENCE_MAX_AGE_MS <= INT64_MAX / 1000,
+  "TIME_REFERENCE_MAX_AGE_MS deve ser positivo e caber em microssegundos int64_t.");
+
 #define PINO_SENSOR 4
 
 OneWire oneWire(PINO_SENSOR);
@@ -50,6 +70,117 @@ unsigned long lastScan = 0;
 unsigned long scanStarted = 0;
 int lastWifiStatus = -1;
 std::atomic<unsigned int> pendingDisconnectReason{0};
+
+enum class TimeQuality { Unknown, Synced, Estimated };
+struct MeasurementTime {
+  bool available = false;
+  time_t utc = 0;  // Não representa uma data quando available == false.
+  TimeQuality quality = TimeQuality::Unknown;
+};
+
+// O callback SNTP ocorre em outra tarefa. A seção crítica só copia dados pequenos.
+portMUX_TYPE ntpReferenceLock = portMUX_INITIALIZER_UNLOCKED;
+int64_t lastNtpSyncUs = -1;
+bool ntpNotificationPending = false;
+bool ntpWifiWasConnected = false;
+TimeQuality lastReportedTimeQuality = TimeQuality::Unknown;
+MeasurementTime measurementTime;
+
+// Declarações explícitas para os tipos locais no pré-processamento da Arduino IDE.
+TimeQuality currentTimeQuality();
+const char* timeQualityName(TimeQuality quality);
+MeasurementTime captureMeasurementTime();
+void printMeasurementTime(const MeasurementTime& value);
+
+void onNtpSync(struct timeval* reference) {
+  // Uma resposta recebida precisa ter uma data plausível, não o relógio de boot.
+  if (reference == nullptr || reference->tv_sec < 1577836800LL) return;  // 2020-01-01 UTC.
+  int64_t synchronizedAt = esp_timer_get_time();
+  portENTER_CRITICAL(&ntpReferenceLock);
+  lastNtpSyncUs = synchronizedAt;
+  ntpNotificationPending = true;
+  portEXIT_CRITICAL(&ntpReferenceLock);
+}
+
+TimeQuality currentTimeQuality() {
+  portENTER_CRITICAL(&ntpReferenceLock);
+  int64_t referenceAt = lastNtpSyncUs;
+  portEXIT_CRITICAL(&ntpReferenceLock);
+  if (referenceAt < 0) return TimeQuality::Unknown;
+  // Timer monotônico de 64 bits: saltos NTP e rollover de millis() não renovam a qualidade.
+  int64_t ageUs = esp_timer_get_time() - referenceAt;
+  return ageUs < static_cast<int64_t>(TIME_REFERENCE_MAX_AGE_MS) * 1000
+    ? TimeQuality::Synced : TimeQuality::Estimated;
+}
+
+const char* timeQualityName(TimeQuality quality) {
+  switch (quality) {
+    case TimeQuality::Synced: return "synced";
+    case TimeQuality::Estimated: return "estimated";
+    default: return "unknown";
+  }
+}
+
+MeasurementTime captureMeasurementTime() {
+  MeasurementTime value;
+  value.quality = currentTimeQuality();
+  if (value.quality != TimeQuality::Unknown) {
+    value.utc = time(nullptr);
+    value.available = true;
+  }
+  return value;
+}
+
+void printUtc(time_t value) {
+  struct tm utc;
+  char formatted[32];
+  gmtime_r(&value, &utc);
+  strftime(formatted, sizeof(formatted), "%Y-%m-%dT%H:%M:%SZ", &utc);
+  Serial.print(formatted);
+}
+
+void printMeasurementTime(const MeasurementTime& value) {
+  Serial.print("Horario da medicao: ");
+  if (value.available) {
+    printUtc(value.utc);
+  } else {
+    Serial.print("indisponivel (sem referencia NTP desde o boot)");
+  }
+  Serial.print(" | time_quality=");
+  Serial.println(timeQualityName(value.quality));
+}
+
+void updateNtp() {
+  bool connected = WiFi.status() == WL_CONNECTED;
+  if (connected && !ntpWifiWasConnected) {
+    // configTime inicia/reinicia SNTP, mas não apaga o horário já obtido nem espera a resposta.
+    configTime(0, 0, NTP_SERVER_1, NTP_SERVER_2);
+    Serial.println("NTP: sincronizacao solicitada em segundo plano (UTC).");
+  } else if (!connected && ntpWifiWasConnected) {
+    Serial.println("NTP: rede indisponivel; referencia anterior e relogio interno preservados.");
+  }
+  ntpWifiWasConnected = connected;
+
+  portENTER_CRITICAL(&ntpReferenceLock);
+  bool notified = ntpNotificationPending;
+  ntpNotificationPending = false;
+  portEXIT_CRITICAL(&ntpReferenceLock);
+  if (notified) {
+    Serial.println("NTP: nova referencia valida recebida; medicoes anteriores permanecem inalteradas.");
+    Serial.print("NTP: UTC atual ");
+    printUtc(time(nullptr));
+    Serial.println();
+  }
+  TimeQuality quality = currentTimeQuality();
+  if (quality != lastReportedTimeQuality) {
+    Serial.print("NTP: time_quality=");
+    Serial.println(timeQualityName(quality));
+    if (quality == TimeQuality::Estimated) {
+      Serial.println("NTP: referencia fora do prazo confiavel; horario continua estimado pelo relogio interno.");
+    }
+    lastReportedTimeQuality = quality;
+  }
+}
 
 const char* wifiStatusName(int status) {
   switch (status) {
@@ -268,6 +399,11 @@ void sendTemperature(float temperature) {
 void setup() {
   Serial.begin(115200);
 
+  esp_sntp_set_time_sync_notification_cb(onNtpSync);
+  esp_sntp_set_sync_mode(SNTP_SYNC_MODE_IMMED);
+  esp_sntp_set_sync_interval(static_cast<uint32_t>(NTP_SYNC_INTERVAL_MS));
+  Serial.println("NTP: aguardando primeira referencia; time_quality=unknown (sem horario absoluto).");
+
   sensor.begin();
   sensor.setResolution(12);
   sensor.setWaitForConversion(false);
@@ -301,8 +437,11 @@ void loop() {
   updateWifiDiagnostics(now);
   now = millis();
   updateWifi(now);
+  updateNtp();
 
   if (!conversionPending && now - lastMeasurement >= MEASUREMENT_INTERVAL_MS) {
+    // Snapshot no início da conversão, não no momento do POST. Não será recalculado.
+    measurementTime = captureMeasurementTime();
     sensor.requestTemperatures();
     lastMeasurement = millis();
     conversionStarted = lastMeasurement;
@@ -321,6 +460,7 @@ void loop() {
       Serial.print("Temperatura: ");
       Serial.print(temperatura);
       Serial.println(" °C");
+      printMeasurementTime(measurementTime);
       sendTemperature(temperatura);
     }
   }

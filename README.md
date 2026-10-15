@@ -130,7 +130,7 @@ O resultado informa se o SSID configurado foi encontrado em 2,4 GHz, RSSI em dBm
 
 Para uso normal, volte `WIFI_DIAGNOSTICS_ENABLED` para `0` e carregue novamente. Configurações locais antigas sem essas opções mantêm o diagnóstico desativado. O modo não altera a senha, o roteador ou o backend. A causa da falha só pode ser avaliada após observar os resultados reais no ESP32.
 
-WiFi e HTTPClient fazem parte do ambiente Arduino ESP32, sem bibliotecas adicionais. HTTP usa timeout de conexão e leitura de 1 segundo cada, encerra `HTTPClient` e o cliente TCP após cada tentativa. A chamada HTTP é síncrona e pode causar pequeno atraso nas leituras em caso de falha; os intervalos são independentes, mas não são uma garantia de tempo real. Não há NTP, armazenamento offline, RTC ou lotes.
+WiFi, HTTPClient e SNTP fazem parte do ambiente Arduino ESP32, sem bibliotecas adicionais. HTTP usa timeout de conexão e leitura de 1 segundo cada, encerra `HTTPClient` e o cliente TCP após cada tentativa. A chamada HTTP é síncrona e pode causar pequeno atraso nas leituras em caso de falha; os intervalos são independentes, mas não são uma garantia de tempo real. Não há armazenamento offline, RTC externo ou lotes.
 
 Para verificar a API, inicie `composer serve-lan` no PC e mantenha ESP32 e PC na mesma rede doméstica confiável. O ESP32 precisa de uma rede Wi-Fi compatível com sua placa (normalmente 2,4 GHz).
 
@@ -154,13 +154,68 @@ Validação manual, após configurar a credencial com orientação de uma ação
 
 O usuário confirmou o fluxo DS18B20 no GPIO 4 → ESP32 conectado ao Wi-Fi TESLA → POST autenticado → API Slim → PostgreSQL → GET de consulta. O Monitor Serial apresentou HTTP 201 e medições físicas foram recuperadas em `/api/v1/temperaturas`, incluindo registros consecutivos com intervalos próximos de 10 segundos. Foi observada melhora na regularidade das transmissões após aproximar o ESP32 do roteador. Logs do PHP com conexões aceitas, isoladamente, não são prova de gravação.
 
-A validação confirma o funcionamento no período observado, sem comprovar estabilidade contínua por períodos prolongados ou resolução definitiva das falhas de conexão anteriores. Não há armazenamento offline, reenvio automático ou NTP. Uma medição pode ser perdida em uma falha de comunicação; um timeout após possível gravação deixa o resultado desconhecido. O Bearer por HTTP permanece restrito a credencial descartável exclusiva do laboratório em rede confiável; produção exige HTTPS.
+A validação confirma o funcionamento no período observado, sem comprovar estabilidade contínua por períodos prolongados ou resolução definitiva das falhas de conexão anteriores. Naquela validação ainda não havia NTP; armazenamento offline e reenvio automático continuam ausentes. Uma medição pode ser perdida em uma falha de comunicação; um timeout após possível gravação deixa o resultado desconhecido. O Bearer por HTTP permanece restrito a credencial descartável exclusiva do laboratório em rede confiável; produção exige HTTPS.
 
 A última suíte PHPUnit executada nesta etapa teve **44 testes, 146 asserções, zero falhas e zero ignorados**. Esse é um resultado anterior, não uma nova execução realizada para esta atualização documental.
 
 Os milestones 5 e 6 têm conclusão funcional com ressalvas no recorte validado: transmissão autenticada e leitura física de um DS18B20 integradas. Como o repositório não apresenta todos os critérios de aceite desses milestones, não foi declarado seu encerramento formal nem alterada a contagem de 4/9 concluídos. Dois sensores e operação prolongada não foram comprovados por esse teste.
 
-Os próximos assuntos planejados são NTP e `measured_at`, ainda não implementados. Será necessário discutir e aprovar a sincronização, o contrato e a evolução do banco antes de qualquer alteração. Atualmente o JSON permanece com `sensor_id` e `temperature`, e `received_at` representa o recebimento no servidor.
+O planejamento registrado nessa validação previa NTP e `measured_at`. A sincronização agora está implementada apenas no firmware, conforme a seção abaixo; a transmissão de `measured_at` continua pendente de discussão e aprovação do contrato e da evolução do banco. O JSON permanece com `sensor_id` e `temperature`, e `received_at` representa o recebimento no servidor.
+
+### NTP e qualidade temporal interna
+
+O firmware usa `configTime` e o callback SNTP do core ESP32, sem esperar pelo horário no `loop()`. Solicita sincronização ao conectar e ao reconectar o Wi-Fi; o cliente SNTP também faz atualizações periódicas em segundo plano. O relógio do sistema continua andando após perder a rede, enquanto o ESP32 permanecer ligado. Reiniciar a placa começa novamente sem referência conhecida.
+
+Os parâmetros abaixo constam em `config.example.h`; os mesmos padrões são usados automaticamente se sua configuração privada antiga não os definir. Para personalizar, adicione somente as opções desejadas em `config.local.h`, sem sobrescrever senha ou token:
+
+| Parâmetro | Padrão | Finalidade |
+|---|---|---|
+| `NTP_SERVER_1` | `pool.ntp.org` | Primeiro servidor NTP |
+| `NTP_SERVER_2` | `time.cloudflare.com` | Segundo servidor NTP |
+| `NTP_SYNC_INTERVAL_MS` | `3600000UL` | Atualização periódica a cada 1 hora; mínimo de 15 segundos |
+| `TIME_REFERENCE_MAX_AGE_MS` | `21600000ULL` | Referência recente por até 6 horas |
+
+Esses servidores públicos exigem DNS e acesso NTP (UDP 123); alcançar a API LAN não garante acesso a NTP. Pode-se configurar um servidor NTP acessível na rede local. Não são necessárias credenciais NTP.
+
+| `time_quality` | Significado |
+|---|---|
+| `unknown` | Nenhuma referência NTP válida desde a inicialização; horário absoluto indisponível |
+| `synced` | Houve referência válida há menos de 6 horas (ou do prazo configurado) |
+| `estimated` | O prazo expirou; o relógio continua usando sua referência anterior |
+
+A janela inicial de 6 horas dá margem a falhas temporárias entre atualizações de 1 hora, mas não certifica a precisão do oscilador. A qualidade depende da idade da última sincronização bem-sucedida, não do estado do Wi-Fi. Falhar uma tentativa ou desconectar não apaga uma referência recente; conectar também não renova sua idade sem uma resposta NTP válida. A idade usa um timer monotônico de 64 bits, sem depender de saltos do relógio UTC ou do rollover de `millis()`.
+
+Internamente, `measurementTime` guarda horário UTC, disponibilidade e qualidade no início da conversão do DS18B20. O snapshot permanece fixo até terminar essa medição: sincronizações posteriores só afetam novas medições. Em `unknown`, não se atribui uma data de calendário; o campo numérico interno não deve ser usado quando `available` é falso. O Monitor Serial mostra o horário em UTC com sufixo `Z` e a qualidade junto à leitura. Os snapshots não formam um histórico armazenado nem uma fila offline.
+
+Eventos de solicitação, nova referência, perda de rede e expiração são registrados sem credenciais; não há mensagens de espera a cada passagem pelo loop. O POST não aguarda NTP e continua enviando somente `sensor_id` e `temperature`, mesmo em `unknown` ou `estimated`. Horário da medição e `time_quality` não são transmitidos nem persistidos na API.
+
+Para validação física na Arduino IDE, com Monitor Serial a 115200 baud:
+
+1. Reinicie com a rede indisponível: observe `time_quality=unknown`, horário indisponível e leituras do sensor continuando.
+2. Disponibilize Wi-Fi com acesso NTP: observe a solicitação em segundo plano, a referência recebida, UTC e `synced`; confirme que o POST e `/health` continuam funcionando.
+3. Interrompa apenas a conectividade, mantendo a placa ligada: UTC deve avançar e a qualidade permanecer `synced` até expirar o prazo, depois `estimated`. Para um teste curto, use temporariamente `TIME_REFERENCE_MAX_AGE_MS` de `60000ULL` antes de carregar; ao terminar, restaure o padrão de 6 horas.
+4. Restabeleça a conectividade: só uma nova resposta NTP deve restaurar `synced`. Se necessário, confira DNS e UDP 123. Compare linhas anteriores do Serial: seus horários e qualidades não são recalculados, mesmo se o relógio atual for corrigido.
+
+Compilar o sketch, isoladamente, não comprova sincronização, precisão, continuidade do relógio sem rede ou reconexão física. A validação abaixo foi relatada pelo usuário no dispositivo real, não inferida da compilação.
+
+### Validação física NTP — 14/10/2026
+
+Com acompanhamento pelo Monitor Serial, foi confirmada a sequência **`unknown → synced → estimated → synced`** em um ESP32 real:
+
+- Inicialização sem Wi-Fi: nenhuma referência NTP, horário da medição indisponível e DS18B20 continuando as leituras.
+- Conexão Wi-Fi e recebimento de referência NTP válida: horário UTC disponível e medições com `time_quality=synced`.
+- Desconexão com a placa energizada e limite experimental de `60000ULL`: transição automática para `estimated` após aproximadamente 60 segundos sem nova referência válida. UTC continuou avançando pelo relógio interno e o sensor continuou medindo.
+- Retorno do Wi-Fi e nova referência NTP: recuperação automática de `estimated` para `synced`, sem reiniciar o ESP32.
+
+O teste aprovou as transições e a recuperação, mas **não mediu a precisão do relógio por períodos prolongados sem sincronização**. A configuração normal permanece em atualização prevista de **1 hora** (`3600000UL`) e validade de **6 horas** (`21600000ULL`). Esses dois valores foram confirmados no `config.local.h` privado antes do checkpoint; o arquivo não foi alterado por esta revisão. O limite experimental de 60 segundos não é a configuração definitiva, e esse teste curto não equivale a uma medição de precisão durante 6 horas.
+
+Medições feitas sem Wi-Fi não são armazenadas para reenvio. O horário da medição e sua qualidade são informações internas ao firmware; os campos `measured_at` e `time_quality` não são transmitidos ou persistidos na API. O POST segue com `sensor_id` e `temperature`; `received_at` continua sendo gerado no PostgreSQL.
+
+Durante os testes também foram observados `connection refused` e `read Timeout` em HTTP, sinais de aproximadamente **-88 e -92 dBm** em algumas varreduras e um ponto mesh da cozinha desligado durante parte do período. São observações para diagnóstico: podem contribuir para a instabilidade, mas não demonstram a causa de todas as falhas HTTP nem sua resolução definitiva. A regularidade observada após aproximar o ESP32 do roteador não comprova estabilidade contínua por períodos prolongados.
+
+### Próxima fase planejada — contrato de dados
+
+A próxima etapa é discutir o contrato e a persistência dos campos candidatos `device_id`, `measurement_id`, `measured_at`, `received_at`, `time_quality`, `wifi_rssi`, `uptime` e `observation`. `received_at` já existe; sua semântica de recebimento deverá ser preservada ou discutida explicitamente. Os demais campos não são persistidos atualmente. Essa lista é planejamento, sem autorização para implementar novos campos, migrações, filas offline ou endpoints. Nenhum milestone inteiro foi declarado concluído por essa validação NTP; permanecem as ressalvas e a contagem formal registrada no `AGENTS.md`.
 
 Na Arduino IDE, com o suporte à placa ESP32 e as bibliotecas OneWire e DallasTemperature disponíveis:
 
