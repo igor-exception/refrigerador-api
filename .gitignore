@@ -9,6 +9,8 @@
 # Arquivos temporários e logs
 *.log
 *.tmp
+*.dump
+*.backup
 
 # Configurações locais do editor
 .vscode/

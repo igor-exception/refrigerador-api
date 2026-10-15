@@ -66,7 +66,7 @@ if (!extension_loaded('pdo_pgsql')) {
 }
 
 $root = dirname(__DIR__);
-$sqlPaths = [$root . '/sql/001_temperature_readings.sql', $root . '/sql/002_measurement_metadata.sql'];
+require_once $root . '/migrations.php';
 
 // Compose resolve o .env com suas próprias regras; não duplicar seu parser em PHP.
 // Capturar toda a saída: ela contém a senha e nunca deve aparecer no terminal.
@@ -131,15 +131,8 @@ if ($config['password'] === null) {
 if (preg_match('/[;\s]/', $config['host'])) {
     fail('TEST_DB_HOST/DB_HOST inválido.');
 }
-$scripts = [];
-foreach ($sqlPaths as $sqlPath) {
-    if (!is_file($sqlPath) || ($sql = file_get_contents($sqlPath)) === false || trim($sql) === '') {
-        fail('Script SQL versionado ausente, vazio ou ilegível.');
-    }
-    $scripts[] = $sql;
-}
-
 try {
+    $migrations = migrationFiles($root . '/sql');
     echo "Conectando ao PostgreSQL..." . PHP_EOL;
     $admin = connectTo('postgres', $config);
     $statement = $admin->prepare('SELECT 1 FROM pg_database WHERE datname = :name');
@@ -162,21 +155,19 @@ try {
         fail('Conexão abriu um banco inesperado; operação interrompida.');
     }
     echo 'Aplicando esquema SQL versionado ao banco de testes...' . PHP_EOL;
-    $testDb->beginTransaction();
-    foreach ($scripts as $sql) {
-        $testDb->exec($sql);
-    }
+    runMigrations($testDb, $migrations);
     $check = $testDb->query("SELECT to_regclass('public.temperature_readings')")->fetchColumn();
     if ($check === null || $check === false) {
         fail('A tabela public.temperature_readings não foi encontrada após aplicar o SQL.');
     }
-    $testDb->commit();
     echo "OK: {$testDatabase} pronto; banco principal não foi selecionado para alterações." . PHP_EOL;
     $testDb = null;
 } catch (PDOException $exception) {
     // Não imprimir DSN nem credenciais em erros de conexão.
     $state = (string) $exception->getCode();
     fail("Falha no PostgreSQL (SQLSTATE {$state}). Confira se o Docker está ativo, as variáveis de ambiente e as permissões do usuário.");
+} catch (RuntimeException $exception) {
+    fail($exception->getMessage());
 }
 
 if (in_array('--run-tests', $args, true)) {

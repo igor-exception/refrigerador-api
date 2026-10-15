@@ -23,13 +23,14 @@ Essas atribuições são necessárias para a execução manual; confira o ambien
 
 ## Preparar a tabela
 
-Com Docker disponível e o serviço PostgreSQL em execução, prepare uma instalação nova do banco de desenvolvimento com os dois scripts, na ordem, em uma transação:
+Com Docker disponível e PostgreSQL em execução, prepare uma instalação nova do banco de desenvolvimento (já criado pelo Compose):
 
 ```powershell
-Get-Content -Raw sql/001_temperature_readings.sql,sql/002_measurement_metadata.sql | docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -1 -U refrigerador -d refrigerador -f -
+composer db:status
+composer db:migrate
 ```
 
-`001` cria a tabela original; `002` acrescenta metadados, restrição de consistência e índice único, sem apagar registros ou mudar IDs e `received_at`. Ambos podem ser reaplicados, mas não corrigem estruturas incompatíveis arbitrárias. Para uma instalação já existente, siga a migração incremental abaixo. A API requer o esquema atualizado antes de receber o contrato enriquecido. Não aplique diretamente em produção.
+`001` cria a tabela original; `002` acrescenta metadados, restrição de consistência e índices, sem apagar registros ou mudar IDs e `received_at`. O executor registra versões e aplica somente as pendentes. Banco existente sem histórico exige baseline explícito, descrito ao final deste documento. Não execute SQL manualmente para novas evoluções nem aplique comandos diretamente em produção.
 
 ## Iniciar e enviar uma medição
 
@@ -171,13 +172,13 @@ O firmware gera um UUID v4 por boot usando `esp_fill_random`, após habilitar o 
 
 `sql/002_measurement_metadata.sql` acrescenta somente colunas, uma restrição de consistência, o índice único necessário à idempotência e um índice por `(received_at DESC, id DESC)` para consulta e paginação, sem tabelas adicionais. Registros anteriores e novos POSTs legados têm todos os sete metadados novos em `null`; isso não equivale a atribuir `time_quality=unknown`, pois a qualidade histórica não é conhecida. O contrato legado continua retornando 201 a cada envio, sem idempotência. `id`, sensor, temperatura e `received_at` históricos são preservados.
 
-Antes de aplicar ao desenvolvimento, preserve um backup caso os dados precisem ser recuperados. Confira a branch e o destino `refrigerador`, e use somente o SQL versionado, em transação. Para uma tabela original já existente:
+O banco atual já recebeu 001/002 manualmente, antes do gerenciador. Preserve um backup e siga o baseline abaixo; não reaplique os arquivos manualmente. Em instalações gerenciadas, futuras alterações devem ser novos SQLs, executados por:
 
 ```powershell
-Get-Content -Raw sql/002_measurement_metadata.sql | docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -1 -U refrigerador -d refrigerador -f -
+composer db:migrate
 ```
 
-A preparação e os testes automatizados aplicam as migrações somente a `refrigerador_test`. O script de servidor não migra bancos. Esta implementação foi validada no banco de testes; a migração foi aplicada manualmente pelo usuário ao banco principal, sem execução automática nesta revisão. Não apague volumes/tabelas para atualizar o esquema. Se uma estrutura divergente impedir a migração, interrompa e investigue; `IF NOT EXISTS` não repara alterações arbitrárias.
+A preparação e os testes automatizados aplicam as migrações somente ao banco isolado. O script de servidor não migra bancos. O usuário confirmou a aplicação manual de 002 ao principal antes desta etapa; o gerenciador não foi executado em modo de escrita nesse banco. Não apague volumes/tabelas para atualizar o esquema. Se uma estrutura divergente impedir a migração ou o baseline, interrompa e investigue; `IF NOT EXISTS` não repara alterações arbitrárias.
 
 Depois de migrar, os exemplos HTTP legados acima continuam utilizáveis. Para testar o formato enriquecido, use `$body` com o JSON exemplificado, mantenha a credencial de laboratório apenas no cabeçalho e envie com `Invoke-RestMethod` para o mesmo POST. Repetir exatamente o corpo deve resultar em 200 e no mesmo `id`; alterar um metadado mantendo o identificador deve resultar em 409. Consulte o GET e, se necessário, `SELECT * FROM temperature_readings ORDER BY received_at DESC, id DESC LIMIT 10;` no banco de desenvolvimento para comparar os campos.
 
@@ -327,13 +328,13 @@ composer setup-tests
 composer test
 ```
 
-`setup-tests` consulta a configuração resolvida por `docker compose config --format json`, sem exibi-la. Usa o usuário e a senha do serviço `postgres`, o host `127.0.0.1` e a porta publicada pelo Compose. Não solicita senha e não grava credenciais em arquivos adicionais. Conecta ao banco administrativo `postgres` apenas para consultar a existência do banco de testes e criá-lo quando necessário; aplica `001_temperature_readings.sql` e `002_measurement_metadata.sql`, na ordem e em transação, somente no banco isolado. O usuário precisa de permissão CREATE DATABASE apenas se esse banco ainda não existir.
+`setup-tests` consulta a configuração resolvida por `docker compose config --format json`, sem exibi-la. Usa o usuário e a senha do serviço `postgres`, o host `127.0.0.1` e a porta publicada pelo Compose. Não solicita senha e não grava credenciais em arquivos adicionais. Conecta ao banco administrativo `postgres` apenas para consultar a existência do banco de testes e criá-lo quando necessário; usa o gerenciador para aplicar versões pendentes somente no banco isolado. O usuário precisa de permissão CREATE DATABASE apenas se esse banco ainda não existir. Banco de testes antigo sem histórico também exige baseline explícito: `composer db:baseline -- --test --confirm=refrigerador_test`. Isso foi feito nesta validação somente no banco de testes, não no principal.
 
 `composer test` repete a preparação e inicia o PHPUnit, transmitindo `TEST_DB_HOST`, `TEST_DB_PORT`, `TEST_DB_NAME`, `TEST_DB_USER` e `TEST_DB_PASSWORD` ao processo filho. Não é necessário exportar essas variáveis manualmente. As variáveis não permanecem no terminal depois do comando. A suíte inclui testes HTTP e de integração da gravação e da consulta; os testes da consulta usam tabelas temporárias na conexão isolada para preservar registros existentes.
 
 Overrides no ambiente do terminal têm precedência: `TEST_DB_*` → `DB_*` → configuração do Compose. O nome de testes usa `TEST_DB_NAME` ou `refrigerador_test`, nunca `DB_NAME`. Deve terminar em `_test` e ser diferente do banco principal configurado em `DB_NAME`, do banco principal do Compose e de `refrigerador`. O `.env` é interpretado pelo Compose; variáveis `TEST_DB_*` escritas nele não são exportadas ao PHP automaticamente.
 
-A preparação pode ser repetida: não apaga bancos, tabelas ou dados. A migração incremental acrescenta o esquema esperado; `IF NOT EXISTS` não corrige estruturas divergentes arbitrárias. Os testes usam transações com rollback e tabelas temporárias para os novos cenários, sem limpar dados existentes. Sequências de IDs podem avançar, comportamento normal do PostgreSQL. Use o banco de testes exclusivamente durante a suíte para evitar interferência nas contagens.
+A preparação pode ser repetida: não apaga bancos, tabelas ou dados. Cada migração e seu registro são confirmados em uma transação. `IF NOT EXISTS` não corrige estruturas divergentes arbitrárias. Os testes da API usam rollback/tabelas temporárias; os do gerenciador criam e removem somente esquemas exclusivos com prefixo `migration_test_` em `refrigerador_test`, preservando o esquema público. Sequências de IDs podem avançar. Use o banco de testes exclusivamente durante a suíte.
 
 Se a conexão, configuração ou preparação falhar, o comando termina com erro antes de iniciar a suíte; não transforma indisponibilidade em sucesso com integração ignorada. Confira se Docker está ativo, se o PostgreSQL está pronto, se `pdo_pgsql` está habilitado e se as credenciais correspondem ao volume existente. Não use `docker compose down -v` para resolver problemas: ele pode excluir dados.
 
@@ -353,6 +354,59 @@ Registro observado: id 275, dispositivo geladeira_01, sensor refrigerator, tempe
 
 Isso comprova o fluxo físico básico ESP32 → API → PostgreSQL → GET, conforme evidência fornecida pelo usuário. Não certifica testes físicos de todos os conflitos, retransmissões ou falhas nem estabilidade prolongada. As falhas HTTP intermitentes continuam pendentes. Medições sem Wi-Fi não são armazenadas para reenvio. Produção exige HTTPS; laboratório HTTP usa somente Bearer descartável e exclusivo, mantido nos arquivos privados.
 
-## Próxima etapa: processo de migrações
+## Migrações versionadas PostgreSQL
 
-Toda alteração futura da estrutura PostgreSQL deverá estar em migrações versionadas, reproduzíveis e testadas. A próxima tarefa será um processo simples que execute versões pendentes em ordem, registre versões aplicadas, evite reaplicações indevidas, reconstrua instalações limpas e preserve dados existentes. Deverá oferecer comandos Composer e documentação de instalação, backup e restauração. Atualmente existem os scripts SQL e a preparação de testes; não há gerenciador de versões aplicadas. Nenhum gerenciador foi implementado nesta revisão. Dashboard, armazenamento offline e lotes permanecem etapas posteriores.
+O executor PHP/PDO em `migrations.php` usa os arquivos `sql/NNN_nome.sql`, ordenados por versão de três dígitos. Os SQLs 001 e 002 foram preservados sem alterações: 001 representa a estrutura inicial e 002 sua evolução incremental. Não há dependência nova nem segunda tabela de medições.
+
+| Comando | Operação |
+|---|---|
+| `composer db:status` | Consulta versões em transação somente leitura; não cria tabelas |
+| `composer db:migrate` | Aplica apenas versões pendentes e registra cada sucesso |
+| `composer db:baseline -- --confirm=refrigerador` | Adota deliberadamente o esquema manual 001+002 após comparação rigorosa |
+
+Por padrão, o destino é **refrigerador**, independentemente de DB_NAME. Para testes, acrescente `--test` após `--`; o destino usa TEST_DB_NAME ou refrigerador_test, deve terminar em `_test` e ser diferente do principal. Exemplos: `composer db:status -- --test` e `composer db:migrate -- --test`. Os comandos não criam o banco: instalação nova usa o banco criado pelo Compose; `composer setup-tests` pode criar apenas o banco de testes.
+
+Conexão usa Compose/.env, com precedência do terminal para DB_HOST, DB_PORT, DB_USER e DB_PASSWORD; padrões vêm do serviço postgres. Em modo teste, TEST_DB_* do terminal têm precedência. Não se solicita senha nem se imprimem credenciais. O servidor continua sem executar migrações automaticamente.
+
+### Instalação limpa e futuras alterações
+
+Após clonar, configurar seu `.env` privado, executar `composer install` e `docker compose up -d postgres`, confira `composer db:status` e execute `composer db:migrate`. O banco vazio recebe tabela, campos, restrições, índices e `schema_migrations`. Repita status para conferir. Migrações reconstroem o esquema, **não recuperam medições históricas perdidas**.
+
+Para evoluir: crie o próximo `sql/003_nome.sql` (e depois 004 etc.), escreva testes, confira status e aplique por Composer. Nunca edite uma versão já aplicada: arquivo, versão e SHA-256 são conferidos contra `schema_migrations`. Somente CRLF é normalizado para LF, para permitir checkout Windows/Linux. Arquivo ausente, versão duplicada, checksum divergente ou histórico fora de ordem interrompem a execução.
+
+Cada SQL deve ser compatível com transação PostgreSQL: não inclua BEGIN/COMMIT/ROLLBACK, comandos de criação de banco ou operações como CREATE INDEX CONCURRENTLY. O executor confirma SQL e registro juntos por versão. A tabela de controle registra versão, arquivo, checksum, applied_at e método (`migration` ou `baseline`). Uma trava advisory de sessão por banco impede dois executores simultâneos, inclusive entre transações; concorrência é recusada com mensagem. Espera por locks de tabelas é limitada a 5 segundos.
+
+### Adoção segura do banco existente
+
+O principal atual tem dados e 001+002 aplicadas manualmente. **O usuário já confirmou o baseline explícito do principal, com 460 registros preservados. Não o repita no ambiente atual.** O procedimento abaixo é referência para outros ambientes existentes sem histórico de versões. Antes, preserve e confira um backup e planeje uma pausa breve das gravações. Consulte status; sem histórico, versões aparecem pendentes, o que não prova ausência do esquema. `db:migrate` recusa um esquema existente sem versões, sem adoção silenciosa.
+
+Somente após revisar o destino, execute `composer db:baseline -- --confirm=refrigerador`. O nome deve corresponder ao banco selecionado. O baseline obtém trava de migração e lock exclusivo na tabela, gera a estrutura esperada 001+002 em esquema de referência dentro de savepoint e compara colunas, ordem, tipos, nulabilidade, defaults, identidade, collation, constraints validadas, índices (incluindo unicidade/ordem), configuração da sequência, RLS e objetos adicionais relevantes. O esquema de referência é revertido antes do registro; nenhuma medição ou sequência existente é alterada. Exige permissão CREATE SCHEMA no banco, além de DDL para a tabela de controle.
+
+Se houver divergência, versão parcial (somente 001), constraints/índices ausentes ou objetos não esperados, o baseline falha sem registrar versões. Não faz reparos nem tenta completar o esquema. Peça revisão humana. A verificação é conservadora: até diferenças semanticamente equivalentes podem exigir revisão. Não compara proprietário, ACL, opções físicas de armazenamento nem valor corrente da sequência; não certifica a qualidade dos dados ou permissões de produção. Este baseline reconhece somente 001+002; migrações posteriores continuam pendentes. Não oferece adoção de esquemas arbitrários ou baseline parcial.
+
+Após sucesso, `db:status` deve mostrar 001/002 aplicadas com método baseline. Repetir baseline é recusado; use `db:migrate` para versões futuras. Não foi implementado rollback destrutivo automático.
+
+### Falhas, backup e restauração
+
+Em erro, a transação da versão atual é revertida e ela continua pendente. Versões anteriores confirmadas permanecem aplicadas. Consulte status, investigue a causa e execute novamente após corrigir o problema; não altere checksums ou registros manualmente para contornar validações. Arquivo já aplicado precisa ser restaurado a partir do Git; correções de estrutura devem ser outra migração. O cliente não imprime SQL/credenciais em exceções do PostgreSQL.
+
+Para backup no PowerShell, gere um arquivo binário no contêiner e copie-o, evitando redirecionamento binário em versões antigas do PowerShell:
+
+```powershell
+docker compose exec -T postgres pg_dump -U refrigerador -d refrigerador -Fc -f /tmp/refrigerador-backup.dump
+docker compose cp postgres:/tmp/refrigerador-backup.dump ./refrigerador-backup.dump
+```
+
+Guarde o dump fora do Git, em local privado com cópia adicional. Para restaurar, use um banco vazio separado, criado explicitamente para recuperação; copie o dump ao contêiner e execute `pg_restore -U refrigerador -d NOME_DO_BANCO_VAZIO /tmp/refrigerador-backup.dump`. Confira dados e esquema antes de alterar configurações. Não use `--clean`, não restaure sobre o principal automaticamente e não remova volumes. Dumps antigos sem schema_migrations precisam de revisão/baseline após restauração; dumps novos incluem a tabela de controle. Um backup só oferece confiança após teste de restauração. O usuário confirmou a restauração em refrigerador_restore_test, com 460 registros tanto no original quanto no restaurado. O agente não repetiu backup nem restauração nesta revisão.
+
+O gerenciador foi validado no Windows; Linux/macOS não foram executados. Dashboard, armazenamento offline, lotes e novas alterações de contrato permanecem fora desta etapa.
+
+Validação do gerenciador em 15/10/2026: **144 testes, 536 asserções, zero falhas e zero ignorados**, em refrigerador_test. Sintaxe PHP aprovada. db:status, db:migrate e db:baseline foram exercitados via Composer em bancos isolados, incluindo instalação limpa, segunda execução e adoção explícita do banco de testes. Composer validate foi aprovado com aviso de licença ausente. O banco exclusivo refrigerador_migration_cli_1792033323_test foi mantido, sem exclusão automática. Nenhuma escrita no banco principal foi executada. Esses resultados automatizados não validam Linux/macOS; a restauração básica foi posteriormente confirmada pelo usuário.
+
+### Validações práticas confirmadas — 15/10/2026
+
+O usuário confirmou backup PostgreSQL em formato Custom, copiado para fora do contêiner e restaurado no banco isolado refrigerador_restore_test. Banco original e restaurado foram conferidos com **460 registros cada**. O arquivo local de backup é privado; extensões .dump e .backup são ignoradas e não participam do Git.
+
+Em refrigerador_migration_manual_test, criado vazio pelo usuário, composer db:migrate -- --test aplicou 001/002. A segunda execução não reaplicou as versões. No principal refrigerador, o usuário executou deliberadamente composer db:baseline -- --confirm=refrigerador e conferiu db:status: 001/002 aplicadas pelo método baseline, mantendo **460 registros**. O fechamento pelo agente não repete migrações ou baseline no principal e não remove contêineres, volumes ou bancos de testes.
+
+Esses relatos práticos complementam os testes automatizados. Não certificam recuperação em todos os cenários de falha nem dispensam backups periódicos e novos testes de restauração. Linux/macOS permanecem sem validação executada.

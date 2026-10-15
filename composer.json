@@ -12,6 +12,9 @@
             "Composer\\Config::disableProcessTimeout",
             "@php scripts/serve.php --lan"
         ],
+        "db:migrate": "@php scripts/db.php migrate",
+        "db:status": "@php scripts/db.php status",
+        "db:baseline": "@php scripts/db.php baseline",
         "setup-tests": "@php scripts/setup-tests.php",
         "test": "@php scripts/setup-tests.php --run-tests"
     },
