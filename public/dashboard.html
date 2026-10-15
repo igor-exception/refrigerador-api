@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Refrigerador IoT · Monitoramento térmico</title>
+  <link rel="stylesheet" href="/assets/dashboard.css">
+  <script src="/assets/dashboard.js" defer></script>
+</head>
+<body>
+  <main>
+    <header class="page-header">
+      <div><p class="eyebrow"><span class="brand-mark" aria-hidden="true">°</span> LABORATÓRIO / TELEMETRIA</p>
+        <h1>Refrigerador IoT<span class="version">v0.1</span></h1>
+        <p class="subtitle">Monitoramento térmico experimental.</p></div>
+      <div class="refresh"><p id="connection" role="status">Aguardando consulta</p><p id="updated">Ainda sem atualização</p><button id="refresh" type="button">Atualizar agora <span aria-hidden="true">↻</span></button></div>
+    </header>
+    <div class="toolbar"><label for="sensor">Sensor <select id="sensor"><option value="refrigerator">refrigerator</option><option value="freezer">freezer</option></select></label><span>Todos os dispositivos · Horários de São Paulo</span></div>
+    <p id="error" class="error" role="alert" hidden></p>
+    <section class="latest" aria-labelledby="latest-title" aria-busy="true">
+      <div class="reading"><p class="eyebrow" id="latest-title">ÚLTIMA MEDIÇÃO RECEBIDA</p><div class="temperature"><span id="temperature">—</span><span class="unit">°C</span></div><p id="identity">Carregando medições…</p></div>
+      <div class="reading-detail"><p id="freshness" class="badge">Dados ainda não consultados</p><dl><div><dt>Medida em</dt><dd id="measured">—</dd></div><div><dt>Recebida em</dt><dd id="received">—</dd></div><div><dt>Qualidade temporal</dt><dd id="quality">—</dd></div><div><dt>Desde o recebimento</dt><dd id="age">—</dd></div></dl></div>
+    </section>
+    <section class="history" aria-labelledby="history-title">
+      <div class="section-heading"><div><p class="eyebrow">A TEMPERATURA AO LONGO DO TEMPO</p><h2 id="history-title">Cada intervalo conta uma história.</h2></div><span class="live-label">Atualização a cada 10 s</span></div>
+      <p class="explanation">Da esquerda para a direita, linha a linha. A cor representa a média; o cinza preserva as lacunas de coleta. A última célula está em coleta.</p>
+      <div id="legend" class="legend"><span>≤ 18 °C</span><div class="scale" aria-label="Escala de azul a vermelho, de 18 a 24 graus Celsius"></div><span>≥ 24 °C</span><span class="no-data-key"><i aria-hidden="true"></i>Sem registros</span></div>
+      <p class="scale-note">Escala de laboratório: centro em 21 °C, variação de ±3 °C. Não representa limites de segurança alimentar.</p>
+      <p id="temporal-warning" class="warning" hidden></p>
+      <div id="heatmaps" aria-busy="true"><p class="placeholder">Consultando os quatro períodos…</p></div>
+    </section>
+    <footer><span>DS18B20 → ESP32 → API → PostgreSQL</span><span>Experimental · Sem interpolação de dados</span></footer>
+  </main>
+  <div id="tooltip" class="tooltip" role="tooltip" hidden></div>
+  <dialog id="details" aria-labelledby="details-title"><div class="dialog-header"><div><p class="eyebrow">DETALHES DO INTERVALO</p><h2 id="details-title">Medições registradas</h2></div><button id="close-details" type="button" aria-label="Fechar detalhes">✕</button></div><div id="details-content"></div></dialog>
+</body>
+</html>

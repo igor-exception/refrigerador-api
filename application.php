@@ -16,9 +16,36 @@ function jsonResponse(ResponseInterface $response, array $data, int $status): Re
     return $response->withStatus($status)->withHeader('Content-Type', 'application/json');
 }
 
-function createApplication(string $token, callable $store, ?callable $list = null): App
+function createApplication(string $token, callable $store, ?callable $list = null, ?callable $heatmap = null): App
 {
     $app = AppFactory::create();
+    $app->get('/dashboard', static function (ServerRequestInterface $request, ResponseInterface $response): ResponseInterface {
+        $response->getBody()->write(file_get_contents(__DIR__ . '/public/dashboard.html'));
+        return $response->withHeader('Content-Type', 'text/html; charset=utf-8')
+            ->withHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
+            ->withHeader('X-Content-Type-Options', 'nosniff');
+    });
+    foreach (['css' => 'text/css', 'js' => 'text/javascript'] as $extension => $type) {
+        $app->get('/assets/dashboard.' . $extension, static function (ServerRequestInterface $request, ResponseInterface $response) use ($extension, $type): ResponseInterface {
+            $response->getBody()->write(file_get_contents(__DIR__ . '/public/assets/dashboard.' . $extension));
+            return $response->withHeader('Content-Type', $type . '; charset=utf-8')->withHeader('X-Content-Type-Options', 'nosniff');
+        });
+    }
+    $app->get('/api/v1/dashboard/heatmap', static function (ServerRequestInterface $request, ResponseInterface $response) use ($heatmap): ResponseInterface {
+        $sensor = $request->getQueryParams()['sensor_id'] ?? 'refrigerator';
+        if (!in_array($sensor, ['refrigerator', 'freezer'], true)) {
+            return jsonResponse($response, ['error' => 'sensor_id deve ser refrigerator ou freezer.'], 422);
+        }
+        try {
+            if ($heatmap === null) {
+                throw new RuntimeException('Dashboard não configurado.');
+            }
+            return jsonResponse($response, $heatmap($sensor), 200)->withHeader('Cache-Control', 'no-store');
+        } catch (PDOException | RuntimeException) {
+            error_log('Falha ao consultar dashboard.');
+            return jsonResponse($response, ['error' => 'Consulta do dashboard indisponível.'], 503);
+        }
+    });
     $app->get('/health', static fn (ServerRequestInterface $request, ResponseInterface $response): ResponseInterface =>
         jsonResponse($response, ['status' => 'ok'], 200));
 

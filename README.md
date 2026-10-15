@@ -184,7 +184,7 @@ Depois de migrar, os exemplos HTTP legados acima continuam utilizáveis. Para te
 
 Validação local desta evolução em 14/10/2026: **124 testes, 461 asserções, zero falhas e zero ignorados**, exclusivamente em `refrigerador_test`. Cobertura de inserção completa, legado, estados temporais, tipos e limites, repetição nos três estados, conflito, metadados e paginação estável no GET e migração sobre tabela temporária antiga com registros, aplicada duas vezes. Compilação aprovada para ESP32 Dev Module, core 3.3.12, com configuração de exemplo sem segredos: 953832 bytes de flash (72%) e 49008 bytes de variáveis globais (14%).
 
-O fluxo físico básico do formato enriquecido foi confirmado pelo usuário, conforme registro abaixo. Isso não significa que conflitos, repetição idempotente ou todos os cenários de falha foram testados no dispositivo. Dashboard, filtros por datas e armazenamento offline continuam pendentes; o GET já permite percorrer o histórico em páginas de até 50 linhas.
+O fluxo físico básico do formato enriquecido foi confirmado pelo usuário, conforme registro abaixo. Isso não significa que conflitos, repetição idempotente ou todos os cenários de falha foram testados no dispositivo. Dashboard v0.1 está implementado conforme seção abaixo; filtros por datas e armazenamento offline continuam pendentes; o GET já permite percorrer o histórico em páginas de até 50 linhas.
 
 ## Firmware ESP32 — sensor DS18B20
 
@@ -296,7 +296,7 @@ Durante os testes também foram observados `connection refused` e `read Timeout`
 
 ### Continuidade após a evolução do contrato
 
-O contrato de metadados está implementado conforme esta documentação; o nome definitivo para o tempo de atividade é `uptime_ms`. A migração 002 foi aplicada manualmente ao desenvolvimento e o fluxo físico básico do novo firmware foi confirmado pelo usuário. Antes do dashboard, permanecem os filtros por datas e a apresentação do histórico, já consultável por paginação. Armazenamento offline e retransmissão continuam fora desta etapa. Nenhum milestone inteiro foi declarado concluído por esses testes locais; permanecem as ressalvas do `AGENTS.md`.
+O contrato de metadados está implementado conforme esta documentação; o nome definitivo para o tempo de atividade é `uptime_ms`. A migração 002 foi aplicada manualmente ao desenvolvimento e o fluxo físico básico do novo firmware foi confirmado pelo usuário. O dashboard v0.1 apresenta janelas recentes; filtros por datas e histórico arbitrário permanecem futuros, e o GET original continua paginado. Armazenamento offline e retransmissão continuam fora desta etapa. Nenhum milestone inteiro foi declarado concluído por esses testes locais; permanecem as ressalvas do `AGENTS.md`.
 
 Na Arduino IDE, com o suporte à placa ESP32 e as bibliotecas OneWire e DallasTemperature disponíveis:
 
@@ -399,7 +399,7 @@ docker compose cp postgres:/tmp/refrigerador-backup.dump ./refrigerador-backup.d
 
 Guarde o dump fora do Git, em local privado com cópia adicional. Para restaurar, use um banco vazio separado, criado explicitamente para recuperação; copie o dump ao contêiner e execute `pg_restore -U refrigerador -d NOME_DO_BANCO_VAZIO /tmp/refrigerador-backup.dump`. Confira dados e esquema antes de alterar configurações. Não use `--clean`, não restaure sobre o principal automaticamente e não remova volumes. Dumps antigos sem schema_migrations precisam de revisão/baseline após restauração; dumps novos incluem a tabela de controle. Um backup só oferece confiança após teste de restauração. O usuário confirmou a restauração em refrigerador_restore_test, com 460 registros tanto no original quanto no restaurado. O agente não repetiu backup nem restauração nesta revisão.
 
-O gerenciador foi validado no Windows; Linux/macOS não foram executados. Dashboard, armazenamento offline, lotes e novas alterações de contrato permanecem fora desta etapa.
+O gerenciador foi validado no Windows; Linux/macOS não foram executados. Na etapa de migrações, dashboard estava fora do escopo; sua v0.1 está descrita abaixo. Armazenamento offline, lotes e novas alterações de contrato permanecem futuros.
 
 Validação do gerenciador em 15/10/2026: **144 testes, 536 asserções, zero falhas e zero ignorados**, em refrigerador_test. Sintaxe PHP aprovada. db:status, db:migrate e db:baseline foram exercitados via Composer em bancos isolados, incluindo instalação limpa, segunda execução e adoção explícita do banco de testes. Composer validate foi aprovado com aviso de licença ausente. O banco exclusivo refrigerador_migration_cli_1792033323_test foi mantido, sem exclusão automática. Nenhuma escrita no banco principal foi executada. Esses resultados automatizados não validam Linux/macOS; a restauração básica foi posteriormente confirmada pelo usuário.
 
@@ -410,3 +410,83 @@ O usuário confirmou backup PostgreSQL em formato Custom, copiado para fora do c
 Em refrigerador_migration_manual_test, criado vazio pelo usuário, composer db:migrate -- --test aplicou 001/002. A segunda execução não reaplicou as versões. No principal refrigerador, o usuário executou deliberadamente composer db:baseline -- --confirm=refrigerador e conferiu db:status: 001/002 aplicadas pelo método baseline, mantendo **460 registros**. O fechamento pelo agente não repete migrações ou baseline no principal e não remove contêineres, volumes ou bancos de testes.
 
 Esses relatos práticos complementam os testes automatizados. Não certificam recuperação em todos os cenários de falha nem dispensam backups periódicos e novos testes de restauração. Linux/macOS permanecem sem validação executada.
+
+## Dashboard experimental v0.1
+
+Com a API iniciada por `composer serve`, abra **http://127.0.0.1:8080/dashboard**. Pela LAN, use o endereço do PC e o mesmo caminho após iniciar `composer serve-lan`. Não há segundo servidor, build frontend, dependência nova ou token na página. O esquema atual já é suficiente: nenhuma migração nova é necessária.
+
+O card mostra a última medição **recebida** para o sensor selecionado, temperatura com duas casas, dispositivo/sensor, measured_at, received_at, qualidade e idade. Dados com mais de **60 segundos** desde recebimento são considerados desatualizados (seis intervalos nominais de coleta); isso não prova que o ESP32 está offline. A indicação de resposta da API é independente. Sensor padrão refrigerator; o seletor também permite freezer. Todos os dispositivos do sensor são agregados, conforme aviso na página; seleção por dispositivo é evolução futura.
+
+Quatro heatmaps aparecem juntos: 10 minutos (10 s/célula), 30 minutos (30 s), 1 hora (1 min) e 5 horas (5 min), cada um com 60 intervalos. A leitura é da esquerda para a direita, linha a linha: 30 colunas no desktop e 15 no móvel. Início e fim são informados por seção. Cor representa média, com escala contínua fixa de 18 a 24 °C centrada em 21 °C; temperaturas externas preservam seu valor e usam a cor extrema. Essa escala de laboratório **não é limite de segurança alimentar**.
+
+Células cinza/texturizadas significam ausência de registros naquele intervalo consultado com sucesso, sem média fictícia, repetição da última leitura ou interpolação. A explicação não atribui causa específica à lacuna. Hover/foco mostra resumo; clique, toque ou Enter/espaço abre detalhes em diálogo acessível (Escape/Fechar). Metadados individuais são explicitamente da última medição do intervalo, não da média. Campos nulos aparecem como Não disponível.
+
+### Agregação e política temporal
+
+`GET /api/v1/dashboard/heatmap?sensor_id=refrigerator` é público e responde com generated_at, timezone, sensor_id, latest, excluded_temporal_count e windows. A ausência de sensor_id usa refrigerator; valor inválido retorna 422. Indisponibilidade retorna 503 genérico, sem SQL/credenciais e sem células fictícias.
+
+Uma consulta parametrizada usa CTEs PostgreSQL, agrupamentos, generate_series e os IDs das últimas medições; não executa 240 consultas nem envia todo o histórico ao navegador. Cada célula contém start/end UTC, average/minimum/maximum, count, received_at_count e last_reading (todos os metadados originais mais time_source e temporal_warning). Vazias: estatísticas e last_reading null, contagens zero. latest continua disponível mesmo quando está fora das cinco horas.
+
+Os intervalos são **[início, fim)**, alinhados à época Unix. Cada seção contém 59 buckets encerrados e o bucket atual parcial; o fim nominal pode ser posterior à consulta em até uma célula, identificada como em coleta. Nenhum instante posterior a generated_at é agregado. Por isso a cobertura passada no início de um bucket pode ser ligeiramente menor que o título nominal. A mesma medição entra uma vez em cada seção, nunca em dois buckets da mesma seção. Empates da última medição usam horário efetivo DESC, received_at DESC, id DESC.
+
+Usa measured_at quando presente e time_quality synced/estimated. Legado/unknown usa received_at, explicitado em time_source e na contagem de fallbacks received_at_count. Ambos timestamps originais são preservados e exibidos em America/Sao_Paulo; armazenamento e cálculos continuam UTC. Uma leitura recebida com atraso pertence ao intervalo em que foi medida, sem substituição silenciosa pelo recebimento.
+
+Horário efetivo futuro ou não finito, ou medição mais de **60 s à frente de received_at**, fica excluído dos agregados e é sinalizado, sem alterar o original. Essa verificação simples evita poluição evidente, mas não corrige relógios nem certifica exatidão do NTP. Mesmo uma diferença positiva pequena em relação ao instante da consulta fica fora até o relógio do servidor alcançá-la. excluded_temporal_count conta os candidatos da consulta (recebidos ou medidos na faixa recente, incluindo anomalias futuras), não faz auditoria global de todo o banco.
+
+Exemplo **parcial** de uma célula vazia; a resposta completa possui quatro seções de 60 células:
+
+```json
+{
+  "start": "2026-10-15T12:00:00.000000Z",
+  "end": "2026-10-15T12:00:10.000000Z",
+  "average": null,
+  "minimum": null,
+  "maximum": null,
+  "count": 0,
+  "received_at_count": 0,
+  "last_reading": null
+}
+```
+
+### Atualização, falhas e validação manual
+
+Fetch atualiza a cada 10 segundos, sem recarregar a página e sem consultas sobrepostas, com timeout de 10 s. Atualização manual também está disponível. Falha inicial mostra indisponibilidade em vez de inventar lacunas; após sucesso, uma falha mantém o snapshot anterior e informa o sensor/última atualização. A idade continua avançando. A indisponibilidade da API não é apresentada como ausência histórica comprovada.
+
+Para inspecionar o contrato no PowerShell com o servidor iniciado:
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8080/api/v1/dashboard/heatmap | ConvertTo-Json -Depth 8
+```
+
+Na página, compare a última leitura com o GET original, abra células preenchidas/vazias, troque o sensor e navegue por Tab/Enter/Escape. Observe atualização automática e estado desatualizado quando a coleta parar. Para conferir falha de consulta sem tocar no banco, interrompa apenas seu servidor local, clique Atualizar e confira a preservação do snapshot; reinicie-o para testar recuperação. Validar também em celular real e leitor de tela. O MVP não estima a causa das lacunas nem exige firmware conectado para abrir o histórico.
+
+O navegador foi exercitado com dados reais já existentes, incluindo detalhe de medição, fallback legado, 240 células, estado desatualizado apesar de API disponível, teclado e viewports 1280/390 px sem overflow horizontal. Falha de rede foi simulada interrompendo somente o servidor iniciado pelo agente: snapshot e temperatura permaneceram visíveis. Não houve escrita no banco principal. A atualização do frontend possui testes node:test sem dependências adicionais; toque em dispositivo real, leitores de tela e operação prolongada ainda precisam de validação do usuário.
+
+O índice existente ajuda a buscar a última recebida. A referência por measured_at não tem índice específico; com histórico muito grande pode exigir revisão do plano e nova migração aprovada. **Tabela de agregados pré-calculados é otimização futura**, não parte desta tarefa. Sem autenticação visual; use apenas no laboratório/rede confiável. Nenhum contrato de gravação, firmware, migração ou dado original foi alterado. Validação visual e funcional aprovada pelo usuário; checkpoint Git autorizado especificamente para esta primeira versão.
+Validação final em 15/10/2026: composer test executado exclusivamente em refrigerador_test, **152 testes, 1801 asserções, zero falhas e zero ignorados**. Inclui agregação pelo endpoint real, fronteiras com microssegundos e preservação das rotas existentes. Sintaxe PHP, node --check do JavaScript e git diff --check aprovados. Recuperação de consulta após reiniciar o servidor local também conferida no navegador. Não houve carregamento ou alteração de firmware nesta tarefa.
+
+### Atualização de monitoramento a cada 10 segundos
+
+A aparência geral da v0.1 foi aprovada pelo usuário. O polling agora usa 10000 ms; a idade do último recebimento continua sendo atualizada a cada segundo, inclusive durante falhas. A proteção busy recusa atualizações simultâneas, com timeout HTTP preservado de 10 s. Se uma consulta ainda estiver em andamento no tick seguinte, esse tick é ignorado; não se cria fila nem concorrência. Navegadores podem reduzir a frequência em abas em segundo plano.
+
+A última célula (intervalo atual em coleta) tem borda interna discreta e aria-current=time em cada grade. O destaque não representa nova medição: uma célula sem registros mantém cinza/textura e estatísticas nulas. As quatro escalas continuam com 60 células de 10/30/60/300 segundos. Tooltip, diálogo, teclado e responsividade foram preservados; frequência do firmware e backend não foram alterados.
+
+Testes da atualização: execute node --test tests/dashboard-refresh.test.cjs com Node.js disponível. São testes isolados em memória do script real, usando apenas bibliotecas nativas; Node é opcional para testar o frontend e não é necessário para servir o dashboard. Cobrem intervalo, sobreposição, erros de rede/HTTP, resposta incompatível, snapshot preservado, recuperação e idade dos dados. Não substituem a validação visual no navegador.
+
+Para conferir, abra /dashboard e recarregue ignorando cache. Na aba Network do navegador, observe as consultas heatmap aproximadamente a cada 10 s em primeiro plano, sem sobreposição. Compare o card e as grades quando chegarem novas medições; o polling não fica sincronizado ao instante exato do ESP32. A borda da última célula deve continuar visível também quando vazia. Ao interromper apenas seu servidor local e atualizar, o snapshot deve permanecer com erro explícito e idade avançando; ao reiniciar, a próxima consulta deve recuperar a visualização.
+
+Validação do ajuste de atualização em 15/10/2026: 5 testes JavaScript aprovados (zero falhas), PHPUnit reexecutado exclusivamente em refrigerador_test com 152 testes, 1801 asserções, zero falhas e zero ignorados. Sintaxe JS/PHP e git diff --check aprovados. O agente não repetiu a validação visual específica desse ajuste; o usuário confirmou depois o funcionamento da versão e aprovou o checkpoint. Alterações anteriores do dashboard foram preservadas.
+
+### Checkpoint funcional aprovado — 15/10/2026
+
+O usuário confirmou o dashboard MVP v0.1 funcionando localmente com medições reais do ESP32 e aprovou sua apresentação e funcionamento para o primeiro checkpoint Git. Com a API servida por `composer serve-lan`, o ESP32 envia o POST autenticado pela rede doméstica; PostgreSQL persiste as medições e o dashboard consulta o endpoint público `/api/v1/dashboard/heatmap`. A interface mostra última medição, time_quality, idade dos dados e quatro heatmaps simultâneos, com atualização da página por Fetch a cada **10 segundos**. Essa aprovação não equivale a estabilidade prolongada nem à versão final do produto.
+
+Pendências documentadas, sem implementação neste checkpoint:
+
+- Rever a redação dos painéis para distinguir claramente atualização da página (10 s), duração de cada célula (10/30/60/300 s) e histórico (10/30/60/300 min). Exemplos sugeridos pelo usuário: “Atualização a cada 10 segundos (histórico dos últimos 10 minutos)”, “Atualização a cada 30 segundos por célula (histórico dos últimos 30 minutos)”, “Atualização a cada 1 minuto por célula (histórico da última 1 hora)” e “Atualização a cada 5 minutos por célula (histórico das últimas 5 horas)”. São propostas de texto a revisar; não alteram o polling global de 10 s nem significam que existem medições novas em todas as células.
+- Definir futuramente faixas ideais por armazenamento/alimento (congelados, resfriados, carnes etc.), mediante aprovação das regras. A escala atual permanece experimental e não representa segurança alimentar.
+- Diagnosticar falhas HTTP intermitentes e validar operação prolongada. Não há armazenamento offline ou reenvio: medições podem ser perdidas em falhas; timeout após possível gravação continua deixando o resultado desconhecido.
+- Evoluir UX/UI, seleção por dispositivo e eficiência em históricos grandes quando houver necessidade. Nenhuma melhoria visual ou regra térmica foi implementada neste fechamento.
+
+Commit e push normal de main para origin/main foram autorizados pelo usuário somente para versionar esta primeira versão após revisão e testes, sem alterações no banco principal, firmware, migrações ou configurações privadas.
+Verificações do checkpoint em 15/10/2026: suíte PHP reexecutada em refrigerador_test com 152 testes, 1801 asserções, zero falhas/ignorados; 5 testes JavaScript aprovados. Sintaxe PHP/JS e git diff --check aprovados. Arquivos privados/backups ignorados e não rastreados; nenhum segredo local examinado encontrado nos arquivos candidatos. Revisão sem mudanças no código funcional, firmware, migrações ou banco principal. Aprovação visual com dados reais fornecida pelo usuário, sem nova alegação de teste físico executado pelo agente neste fechamento.
