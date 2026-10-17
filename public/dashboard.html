@@ -12,7 +12,7 @@
   <main>
     <header class="page-header">
       <div><p class="eyebrow"><span class="brand-mark" aria-hidden="true">°</span> LABORATÓRIO / TELEMETRIA</p>
-        <h1>Refrigerador IoT<span class="version">v0.1</span></h1>
+        <h1>Refrigerador IoT<span class="version">v0.2</span></h1>
         <p class="subtitle">Monitoramento térmico experimental.</p></div>
       <div class="refresh"><p id="connection" role="status">Aguardando consulta</p><p id="updated">Ainda sem atualização</p><button id="refresh" type="button">Atualizar agora <span aria-hidden="true">↻</span></button></div>
     </header>
@@ -24,9 +24,9 @@
     </section>
     <section class="history" aria-labelledby="history-title">
       <div class="section-heading"><div><p class="eyebrow">A TEMPERATURA AO LONGO DO TEMPO</p><h2 id="history-title">Cada intervalo conta uma história.</h2></div><span class="live-label">Atualização a cada 10 s</span></div>
-      <p class="explanation">Da esquerda para a direita, linha a linha. A cor representa a média; o cinza preserva as lacunas de coleta. A última célula está em coleta.</p>
-      <div id="legend" class="legend"><span>≤ 18 °C</span><div class="scale" aria-label="Escala de azul a vermelho, de 18 a 24 graus Celsius"></div><span>≥ 24 °C</span><span class="no-data-key"><i aria-hidden="true"></i>Sem registros</span></div>
-      <p class="scale-note">Escala de laboratório: centro em 21 °C, variação de ±3 °C. Não representa limites de segurança alimentar.</p>
+      <p class="explanation">Cada célula agrega as medições do intervalo indicado no título. Da esquerda para a direita, linha a linha. Nos intervalos encerrados e confirmados, número e cor representam a média em °C; o cinza preserva as lacunas registradas. O círculo na última célula indica apenas o intervalo temporal em andamento, mesmo sem novas medições; não indica carregamento da API, conexão com o ESP32 ou confirmação de coleta. Intervalos com borda tracejada aguardam consulta ou confirmação do fechamento; não representam ausência comprovada de coleta.</p>
+      <div id="legend" class="legend"><span>≤ 10 °C</span><div class="scale" aria-label="Escala de azul a vermelho, de 10 a 35 graus Celsius"></div><span>≥ 35 °C</span><span class="no-data-key"><i aria-hidden="true"></i>Sem registros</span></div>
+      <p class="scale-note">Escala fixa de laboratório: 10 a 35 °C. Valores fora da faixa saturam apenas a cor. Não representa limites de segurança alimentar.</p>
       <p id="temporal-warning" class="warning" hidden></p>
       <div id="heatmaps" aria-busy="true"><p class="placeholder">Consultando os quatro períodos…</p></div>
     </section>

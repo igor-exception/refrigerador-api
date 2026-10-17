@@ -411,15 +411,36 @@ Em refrigerador_migration_manual_test, criado vazio pelo usuário, composer db:m
 
 Esses relatos práticos complementam os testes automatizados. Não certificam recuperação em todos os cenários de falha nem dispensam backups periódicos e novos testes de restauração. Linux/macOS permanecem sem validação executada.
 
-## Dashboard experimental v0.1
+## Dashboard v0.2 — Refinamento Visual
 
 Com a API iniciada por `composer serve`, abra **http://127.0.0.1:8080/dashboard**. Pela LAN, use o endereço do PC e o mesmo caminho após iniciar `composer serve-lan`. Não há segundo servidor, build frontend, dependência nova ou token na página. O esquema atual já é suficiente: nenhuma migração nova é necessária.
 
 O card mostra a última medição **recebida** para o sensor selecionado, temperatura com duas casas, dispositivo/sensor, measured_at, received_at, qualidade e idade. Dados com mais de **60 segundos** desde recebimento são considerados desatualizados (seis intervalos nominais de coleta); isso não prova que o ESP32 está offline. A indicação de resposta da API é independente. Sensor padrão refrigerator; o seletor também permite freezer. Todos os dispositivos do sensor são agregados, conforme aviso na página; seleção por dispositivo é evolução futura.
 
-Quatro heatmaps aparecem juntos: 10 minutos (10 s/célula), 30 minutos (30 s), 1 hora (1 min) e 5 horas (5 min), cada um com 60 intervalos. A leitura é da esquerda para a direita, linha a linha: 30 colunas no desktop e 15 no móvel. Início e fim são informados por seção. Cor representa média, com escala contínua fixa de 18 a 24 °C centrada em 21 °C; temperaturas externas preservam seu valor e usam a cor extrema. Essa escala de laboratório **não é limite de segurança alimentar**.
+Quatro heatmaps aparecem juntos, exatamente com 60 células cada. Os títulos destacam `Medição a cada 10 segundos`, `Medição a cada 30 segundos`, `Medição a cada 1 minuto` e `Medição a cada 5 minutos`; o texto ao lado separa as janelas totais de 10 minutos, 30 minutos, 1 hora e 5 horas. Os títulos indicam a duração de agregação por célula, não uma alteração na frequência de leitura ou envio do ESP32.
+
+A leitura é da esquerda para a direita, linha a linha. As grades usam 30 colunas em telas largas e 20, 15, 10 ou 6 conforme os breakpoints de 1050, 750, 650 e 380 px, sempre mantendo 60 células. Início e fim são informados por seção. Intervalos encerrados e confirmados mostram a média com **uma casa decimal em pt-BR**, sem °C dentro da célula; a legenda informa a unidade. O texto usa preto ou branco conforme o contraste. A escala visual é fixa de **10 °C a 35 °C**, de azul forte a vermelho forte; temperaturas externas preservam seu valor e saturam somente a cor. Essa escala experimental **não é limite de segurança alimentar** e não possui controles de mínimo/máximo.
 
 Células cinza/texturizadas significam ausência de registros naquele intervalo consultado com sucesso, sem média fictícia, repetição da última leitura ou interpolação. A explicação não atribui causa específica à lacuna. Hover/foco mostra resumo; clique, toque ou Enter/espaço abre detalhes em diálogo acessível (Escape/Fechar). Metadados individuais são explicitamente da última medição do intervalo, não da média. Campos nulos aparecem como Não disponível.
+
+A última célula mostra exclusivamente um **spinner circular centralizado**, sem temperatura, pontinhos, countdown, preenchimento progressivo ou piscar da célula inteira. A rotação é CSS, sem requisições ou timers por célula; `prefers-reduced-motion` mantém um círculo estático. O botão usa `aria-current=time` e uma descrição acessível; o desenho é oculto aos leitores de tela para não anunciar o movimento. O spinner indica apenas o intervalo temporal atual, mesmo sem novas medições: não significa carregamento da API, confirmação de coleta ou comunicação ativa com o ESP32.
+
+O frontend mantém a referência estimada do servidor por relógio monotônico, com compensação aproximada de latência, para avançar as janelas entre consultas. Um timer de 1 s atualiza idade e limites temporais; o polling permanece em 10 s. Bordas tracejadas indicam intervalos ainda não consultados ou cujo fechamento ainda não foi confirmado. A última média parcial é preservada no snapshot/detalhes, mas só aparece como temperatura histórica na grade após confirmação pela API. Pendências não são convertidas automaticamente em lacunas. Falhas mantêm os dados conhecidos e os avisos existentes; a janela temporal continua avançando sem fabricar temperaturas.
+
+### Limitações e pendências da v0.2
+
+Persistem relatos de falhas HTTP intermitentes, RSSI baixo e instabilidade ESP32/Wi-Fi; a causa não foi demonstrada e a operação prolongada não foi certificada. Sem armazenamento offline/reenvio, medições podem faltar. Um timeout após possível gravação deixa o resultado desconhecido. Medições podem chegar com atraso; os horários e a qualidade temporal continuam sendo tratados pela política existente abaixo. API disponível e spinner ativo não comprovam conectividade do dispositivo. Abas em segundo plano podem reduzir a frequência de timers; a referência temporal é aproximada, não uma medição de precisão do relógio.
+
+Pendências, sem implementação neste checkpoint:
+
+- Investigar a rede Mesh TESLA com os dois TP-Link Deco M4 e identificar o BSSID utilizado pelo ESP32.
+- Diagnosticar RSSI, `connection refused`, `read Timeout` e outras falhas HTTP, com evidências e validação prolongada.
+- Discutir configuração manual de temperatura mínima/máxima do dashboard.
+- Melhorar responsividade e usabilidade conforme avaliações futuras, incluindo validação em celular real e leitor de tela.
+
+O checkpoint de partida é `632ffef` (MVP v0.1), preservado no histórico. O fechamento v0.2 autoriza especificamente commit/push normal de `main` e tag anotada `dashboard-v0.2`, após verificações. Não inclui alterações de API, consultas PostgreSQL, migrações, firmware, autenticação, Wi-Fi ou configurações privadas. Os registros históricos da v0.1 ao final desta seção descrevem aquela etapa, não a apresentação atual.
+
+Verificações do fechamento em 17/10/2026: `node --test tests/dashboard-refresh.test.cjs` com **17 testes aprovados**; `composer test` exclusivamente em **refrigerador_test**, com **152 testes e 1801 asserções**, zero falhas/ignorados. Sintaxe PHP dos arquivos rastreados, sintaxe JS e `git diff --check` aprovados. Nas validações desta evolução, o navegador LAN em `http://192.168.1.81:8080/dashboard` confirmou quatro spinners, 240 células, teclado/detalhes e cinco larguras entre 320 e 1280 px sem overflow. O IP foi conferido e o servidor existente reutilizado. Falhas/ausência de medições foram simuladas nos testes JS; não houve novo teste físico de desconexão do ESP32. Celular real, leitor de tela e operação prolongada permanecem pendentes.
 
 ### Agregação e política temporal
 
@@ -465,7 +486,7 @@ O navegador foi exercitado com dados reais já existentes, incluindo detalhe de 
 O índice existente ajuda a buscar a última recebida. A referência por measured_at não tem índice específico; com histórico muito grande pode exigir revisão do plano e nova migração aprovada. **Tabela de agregados pré-calculados é otimização futura**, não parte desta tarefa. Sem autenticação visual; use apenas no laboratório/rede confiável. Nenhum contrato de gravação, firmware, migração ou dado original foi alterado. Validação visual e funcional aprovada pelo usuário; checkpoint Git autorizado especificamente para esta primeira versão.
 Validação final em 15/10/2026: composer test executado exclusivamente em refrigerador_test, **152 testes, 1801 asserções, zero falhas e zero ignorados**. Inclui agregação pelo endpoint real, fronteiras com microssegundos e preservação das rotas existentes. Sintaxe PHP, node --check do JavaScript e git diff --check aprovados. Recuperação de consulta após reiniciar o servidor local também conferida no navegador. Não houve carregamento ou alteração de firmware nesta tarefa.
 
-### Atualização de monitoramento a cada 10 segundos
+### Histórico v0.1 — atualização de monitoramento a cada 10 segundos
 
 A aparência geral da v0.1 foi aprovada pelo usuário. O polling agora usa 10000 ms; a idade do último recebimento continua sendo atualizada a cada segundo, inclusive durante falhas. A proteção busy recusa atualizações simultâneas, com timeout HTTP preservado de 10 s. Se uma consulta ainda estiver em andamento no tick seguinte, esse tick é ignorado; não se cria fila nem concorrência. Navegadores podem reduzir a frequência em abas em segundo plano.
 
@@ -477,7 +498,7 @@ Para conferir, abra /dashboard e recarregue ignorando cache. Na aba Network do n
 
 Validação do ajuste de atualização em 15/10/2026: 5 testes JavaScript aprovados (zero falhas), PHPUnit reexecutado exclusivamente em refrigerador_test com 152 testes, 1801 asserções, zero falhas e zero ignorados. Sintaxe JS/PHP e git diff --check aprovados. O agente não repetiu a validação visual específica desse ajuste; o usuário confirmou depois o funcionamento da versão e aprovou o checkpoint. Alterações anteriores do dashboard foram preservadas.
 
-### Checkpoint funcional aprovado — 15/10/2026
+### Histórico v0.1 — checkpoint funcional aprovado em 15/10/2026
 
 O usuário confirmou o dashboard MVP v0.1 funcionando localmente com medições reais do ESP32 e aprovou sua apresentação e funcionamento para o primeiro checkpoint Git. Com a API servida por `composer serve-lan`, o ESP32 envia o POST autenticado pela rede doméstica; PostgreSQL persiste as medições e o dashboard consulta o endpoint público `/api/v1/dashboard/heatmap`. A interface mostra última medição, time_quality, idade dos dados e quatro heatmaps simultâneos, com atualização da página por Fetch a cada **10 segundos**. Essa aprovação não equivale a estabilidade prolongada nem à versão final do produto.
 

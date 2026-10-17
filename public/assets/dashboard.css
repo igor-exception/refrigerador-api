@@ -229,7 +229,7 @@ h2{
   height:9px;
   width:210px;
   border-radius:3px;
-  background:linear-gradient(to right,#2355ae,#488bd0,#a1cde5,#e6e9d9,#f4d870,#ed944c,#ce493f)
+  background:linear-gradient(to right,#1e40af 0%,#3a82ce 20%,#97cae3 40%,#e6e9d9 50%,#f4d870 60%,#ed8c45 80%,#c12626 100%)
 }
 .no-data-key{
   display:flex;
@@ -253,13 +253,15 @@ h2{
 }
 .heatmap-head{
   display:flex;
+  flex-wrap:wrap;
+  gap:8px 16px;
   align-items:baseline;
   justify-content:space-between;
   margin-bottom:14px
 }
 .heatmap h3{
-  font-size:14px;
-  font-weight:600;
+  font-size:16px;
+  font-weight:650;
   margin:0
 }
 .heatmap-head p{
@@ -273,6 +275,8 @@ h2{
   gap:5px
 }
 .cell{
+  display:grid;
+  place-items:center;
   aspect-ratio:1;
   border-radius:3px;
   border:1px solid #00000005;
@@ -282,8 +286,31 @@ h2{
   position:relative;
   transition:transform .1s,outline .1s
 }
-.cell.current{
-  box-shadow:inset 0 0 0 2px #52685e;
+.cell[aria-current="time"]{
+  color:#223a36;
+  background:#d9e7cf
+}
+.cell-spinner{
+  width:52%;
+  aspect-ratio:1;
+  border:2px solid #275d4d33;
+  border-top-color:#275d4d;
+  border-radius:50%;
+  pointer-events:none;
+  animation:interval-spin 1.2s linear infinite
+}
+@keyframes interval-spin{
+  to{transform:rotate(360deg)}
+}
+.cell-value{
+  position:relative;
+  z-index:1;
+  font-size:10px;
+  font-weight:650;
+  font-variant-numeric:tabular-nums;
+  line-height:1;
+  white-space:nowrap;
+  pointer-events:none
 }
 .cell:hover,.cell:focus-visible{
   outline:2px solid #233f35;
@@ -293,6 +320,14 @@ h2{
 }
 .cell.empty{
   background:repeating-linear-gradient(135deg,#e0e4df,#e0e4df 4px,#d8ded7 4px,#d8ded7 5px)
+}
+.cell.pending{
+  border:1px dashed #8b9788;
+  background:#f1f2ed
+}
+.cell.current{
+  background:#d9e7cf;
+  border:1px solid #52685e
 }
 .range{
   display:flex;
@@ -396,6 +431,16 @@ button:focus-visible,select:focus-visible{
 [hidden]{
   display:none!important
 }
+@media(max-width:1050px){
+  .grid{
+  grid-template-columns:repeat(20,minmax(0,1fr))
+}
+}
+@media(max-width:750px){
+  .grid{
+  grid-template-columns:repeat(15,minmax(0,1fr))
+}
+}
 @media(max-width:650px){
   main{
   padding:26px 20px
@@ -423,8 +468,11 @@ h1{
   padding:20px 0 0
 }
 .grid{
-  grid-template-columns:repeat(15,minmax(0,1fr));
+  grid-template-columns:repeat(10,minmax(0,1fr));
   gap:4px
+}
+.cell-value{
+  font-size:11px
 }
 .section-heading{
   align-items:start
@@ -463,7 +511,15 @@ footer{
 }
 
 }
+@media(max-width:380px){
+  .grid{
+  grid-template-columns:repeat(6,minmax(0,1fr))
+}
+}
 @media(prefers-reduced-motion:reduce){
+  .cell-spinner{
+  animation:none
+}
   .cell{
   transition:none
 }
